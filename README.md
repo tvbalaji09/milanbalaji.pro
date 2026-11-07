@@ -1,6 +1,6 @@
 # Little steps activity tracker
 
-A local application for two children, each with editable names, independent daily records, 30-minute Reading, Academics, and Exercise goals, progress rings, and a monthly calendar. No dependencies, external assets, database, or cloud services.
+A local application for two children, each with editable names, independent daily records, six daily goals: Reading (30 min), Academics (30 min), Exercise (30 min), Family & Fun (10 min), Guitar (20 min), and Journal (5 min), progress rings, and a monthly calendar. No dependencies, external assets, database, or cloud services.
 
 Requires Python 3.10+ and a current browser.
 
@@ -24,13 +24,13 @@ The server binds to `127.0.0.1` by default. It is intended for one local browser
 
 ## Use and backups
 
-Select a child, edit their name, and choose any current or past date. Add 5 or 10 minutes, or enter exact daily totals and select **Save daily minutes**. All successful changes save automatically to disk. Rings cap at the 30-minute goal while totals retain extra minutes. Daily minutes must be nonnegative whole numbers, with at most 1440 minutes total. Future dates cannot be entered.
+Select a child, edit their name, and choose any current or past date. Add 5 or 10 minutes, or enter exact daily totals and select **Save daily minutes**. All successful changes save automatically to disk. Each ring caps at that activity’s daily goal while totals retain extra minutes. Daily minutes must be nonnegative whole numbers, with at most 1440 minutes total. Future dates cannot be entered.
 
-Use **Export JSON** to download both profiles and all records. **Restore JSON** accepts the same version 1 format, asks before replacing both profiles, validates the entire file, and saves it atomically. Invalid backups leave existing data intact. Export before restoring if you need to retain the previous records.
+Use **Export JSON** to download both profiles and all records. **Restore JSON** accepts version 3 backups and older version 1 or 2 backups, asks before replacing both profiles, validates the entire file, and saves it atomically. Invalid backups leave existing data intact. Export before restoring if you need to retain the previous records.
 
 `data/activities.json` is created on first startup, outside the publicly served `public/` folder. Writes use a temporary file in the same directory, file flush/fsync, atomic replacement, and directory fsync. A corrupt existing JSON file causes startup to fail rather than overwriting it: preserve a copy and repair it or move it aside before starting and restoring an exported backup. The JSON endpoint intentionally supplies records to the local app; filesystem paths are never publicly served.
 
-The folder supplied for this task was empty, so no original `kids-activity.html` design or legacy backup format was available. The included page provides a new rings-and-calendar design. Restores support the documented application schema, not unknown legacy formats.
+The folder supplied for this task was empty, so no original `kids-activity.html` design or legacy backup format was available. The included page provides a new rings-and-calendar design. Restores support the application’s version 1, version 2, and version 3 schemas, not unknown external formats.
 
 ## Tests
 
@@ -41,3 +41,138 @@ node --check public/app.js
 ```
 
 Node is optional and only used for JavaScript syntax verification. Tests use temporary storage and a loopback HTTP server; they do not change personal records. They cover saving, server restart, export/restore round trips, invalid restores, separate children, private-file access, and failed atomic writes.
+
+## Free hosted version: Cloudflare Workers + D1
+
+This checkout is already configured for D1 database `milanbalaji-activities` in your Cloudflare account. The initial schema has been applied remotely and the Worker is deployed at https://app.milanbalaji.workers.dev. Both login secrets are configured; sign in with username `family` and the password you set. The preview HTML and API both return HTTP 401 login challenges over HTTPS when unauthenticated. You can skip database creation and the initial deployment below for this existing installation.
+
+Cloudflare assigned `harlan.ns.cloudflare.com` and `millie.ns.cloudflare.com` to `milanbalaji.pro`. The custom-domain route is already configured and Cloudflare accepted it. At the latest deployment, zone activation and public DNS propagation were still pending; the custom domain's HTTPS availability has not yet been verified. The preview URL can be used meanwhile.
+
+The same interface can now run online. The hosted version stores both profiles in Cloudflare D1, rather than `data/activities.json`. The Python app above still works offline and uses its original atomic JSON storage. Data does not sync automatically between the two: use JSON export/restore to transfer it. No personal records are included in deployment assets.
+
+Cloudflare's Workers and D1 free plans have usage limits, which should be ample for a family tracker. Domain renewal at Spaceship remains separate. Use the Free plans; no paid database is required. Current details: [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/) and [D1 pricing](https://developers.cloudflare.com/d1/platform/pricing/).
+
+Hosted backups are limited to **1 MB** (the local Python app accepts 5 MB). Save and restore use one atomic SQL update. A revision check prevents another tab/device from silently overwriting a newer save; if you see a conflict, reload to get the latest records before editing. Export any unsaved values separately before reloading. Dates are validated using Europe/London time, configurable through `TIME_ZONE` in `wrangler.jsonc`.
+
+The hosted API uses `X-Activities-Revision` for its revision check so Cloudflare compression or cache features can weaken/remove ETags without blocking saves. Legacy ETag clients are also supported. Browser checks cover saving each child's name and minutes, then reloading, with both weak and missing ETags.
+
+### 1. Create your account and install tools
+
+Create a free account at https://dash.cloudflare.com/sign-up. Install Node.js 22.13+ (a current LTS is recommended), then:
+
+```sh
+cd /Users/balajitv/milanbalaji.pro
+npm ci
+npx wrangler login
+npx wrangler whoami
+```
+
+`wrangler login` opens your browser. Authorize your own account there. Never put passwords, Cloudflare tokens, or `.dev.vars` in Git or this chat.
+
+### 2. Create persistent storage
+
+```sh
+npx wrangler d1 create milanbalaji-activities
+```
+
+Copy the returned `database_id` into the `d1_databases` entry of `wrangler.jsonc`, replacing `00000000-0000-0000-0000-000000000000`. If you already created this database, use `npx wrangler d1 list` to find its ID instead of creating another.
+
+Initialize the remote database:
+
+```sh
+npx wrangler d1 migrations apply milanbalaji-activities --remote
+```
+
+Migrations preserve existing data. The first migration creates two empty profiles, not a copy of your local records.
+
+### 3. Deploy and set a family login
+
+```sh
+npm run deploy
+npx wrangler secret put APP_USERNAME
+npx wrangler secret put APP_PASSWORD
+```
+
+The secret commands prompt privately. Choose a username without `:` and a long, unique password. Until both secrets exist, the deployed app returns HTTP 503 and exposes no journal or assets. Once configured, opening the printed `https://milanbalaji-activities.<your-subdomain>.workers.dev` URL shows a browser login prompt. Authentication protects HTML, CSS, JavaScript, and the API on every hostname. Passwords are stored as Cloudflare secrets and are never sent in application HTML. Use HTTPS. To rotate either credential, run the corresponding secret command again. Browsers cache HTTP Basic credentials; close the browser/private window to end your session.
+
+Test saving minutes, reloading, switching children, exporting, and restoring on this URL before moving your domain. To migrate existing records, export from the local Python app and restore into the hosted app after signing in. Subsequent deployments retain the D1 records:
+
+```sh
+npm run deploy
+```
+
+### 4. Connect milanbalaji.pro from Spaceship
+
+1. In Cloudflare, select **Add a domain**, enter `milanbalaji.pro`, and choose the **Free** zone plan.
+2. Review imported DNS records. Preserve any existing mail (MX/TXT), verification, or other service records.
+3. Cloudflare gives you two authoritative nameservers. In Spaceship, open the domain's nameserver settings, select custom nameservers, and enter exactly those two values. Registration stays at Spaceship; Cloudflare will manage DNS. Wait until Cloudflare shows the domain as **Active**.
+4. In Cloudflare DNS, remove only parking A/AAAA/CNAME records at the root `@` that conflict with the new app. Do not change mail records.
+5. Add the following top-level property to `wrangler.jsonc` (with a comma separating it from the preceding property):
+
+```json
+"routes": [{"pattern": "milanbalaji.pro", "custom_domain": true}]
+```
+
+6. Run `npm run deploy` again. Cloudflare creates the required domain routing and HTTPS certificate. Open **https://milanbalaji.pro**, sign in, and verify a save survives reload. Certificate/DNS activation may take time. The workers.dev hostname remains protected by the same login.
+
+Do not point Spaceship DNS at a guessed Cloudflare IP. Custom Domains require the domain to be active in your Cloudflare account. Reference: [Cloudflare Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/).
+
+### Local Worker testing (separate from Python data)
+
+```sh
+npm ci
+cp .dev.vars.example .dev.vars
+```
+
+Edit `.dev.vars` to choose local test credentials, then:
+
+```sh
+npx wrangler d1 migrations apply milanbalaji-activities --local
+npm run dev
+```
+
+Open the localhost URL printed by Wrangler and use your local test credentials. This stores test data under ignored `.wrangler/`, not in your remote database or Python JSON. These local credentials are never uploaded; remote credentials must be set with `wrangler secret put`.
+
+Checks:
+
+```sh
+npm test
+npm run check
+python3 -m unittest discover -s tests -v
+```
+
+Worker tests execute the actual SQL against temporary file-backed SQLite and cover save/reopen/restore, child isolation, invalid backups, stale saves, authentication, storage errors, and cross-origin writes. `npm run check` validates and bundles the Cloudflare configuration without publishing. Actual remote deployment requires your Cloudflare account, the real D1 ID, and login secrets.
+
+### Short app address
+
+The main app URL is **https://app.milanbalaji.workers.dev**. The account subdomain is now `milanbalaji`; previous URLs under `tvbalaji09-milanbalaji.workers.dev` are retired.
+
+`cloudflare/alias.mjs` forwards the original request through the `ACTIVITIES` service binding to `milanbalaji-activities`. This shares its existing password protection, API validation, and D1 records. There is no duplicate database or separate login. The custom domain `milanbalaji.pro` still routes to the original backend.
+
+Deploy app changes with `npm run deploy` as before. The alias automatically uses the backend's deployed version. To change or recreate the alias itself:
+
+```sh
+npx wrangler deploy --config wrangler.alias.jsonc
+```
+
+Continue setting secrets with the main `wrangler.jsonc` configuration, not the alias configuration.
+
+### Six skills and positive affirmations
+
+The app tracks Reading, Academics, and Exercise at 30 minutes each; Family & Fun at 10 minutes; Guitar at 20 minutes; and Journal at 5 minutes. Six calendar bars use these individual goals. New exports use version 3 and the daily keys `reading`, `academics`, `exercise`, `family_fun`, `guitar`, and `journal`.
+
+Existing version 1 records and backups upgrade when read/restored: the original minutes and names are preserved and the three new activities start at zero. No bulk database rewrite or destructive migration is needed. The next successful save persists the current backup version. Reload older open tabs after updating. Restoring a version 1 backup replaces the journal and sets the new skills to zero, so export current records first if you want to keep those minutes.
+
+The page includes 36 affirmations about self-worth, belonging, kindness, learning, feelings, and asking for support. Four appear at once; **More kind words** cycles through them. Messages vary by child and selected date and never depend on completed goals.
+
+### Daily journal entries
+
+Choose a child and a date using the date picker or monthly calendar, then complete any of the five optional prompts: Today’s mood, Tomorrow’s little goal, Something I’m thankful for, Something challenging, and My proud moment. Click **Save journal**. Each answer accepts up to 2,000 characters. Saving journal text is independent of the Journal activity’s five-minute total. Saving all five answers empty removes that day’s journal entry.
+
+A 📝 marker identifies dates with saved journal entries. Selecting the day loads the entry for the selected child; other children’s entries remain separate. Unsaved drafts are retained in memory while navigating dates/profiles or saving activity minutes. Reloading/closing the page can discard drafts, so the browser warns before leaving with unsaved text. Save each draft to persist it. Failed saves retain the draft so you can retry.
+
+- **Export this entry** downloads the selected day’s saved journal as UTF-8 text.
+- **Export all journals** downloads the selected child’s saved journals in date order as UTF-8 text.
+- **Export JSON** includes both profiles, all activity minutes, and all saved journals; use **Restore JSON** to recover the entire backup. Text exports are for reading and cannot be restored. Save drafts before exporting or restoring.
+
+Version 3 adds an `entries` object to each child, keyed by ISO date. Every entry contains the string fields `mood`, `tomorrow_goal`, `thankful`, `challenge`, and `proud`. Existing version 1/2 records upgrade with empty journal collections. No destructive database migration is needed. Restoring an older backup replaces the current records and clears journals that were not included in that older backup; export a current JSON backup first if needed.

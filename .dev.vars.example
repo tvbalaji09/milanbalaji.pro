@@ -1,0 +1,3 @@
+# LOCAL DEVELOPMENT ONLY. Copy to .dev.vars and choose your own credentials.
+APP_USERNAME="family"
+APP_PASSWORD="replace-with-a-long-unique-password"

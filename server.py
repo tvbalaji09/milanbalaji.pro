@@ -7,12 +7,18 @@ import tempfile
 import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 ROOT = Path(__file__).resolve().parent
-CATEGORIES = ('reading', 'academics', 'exercise')
+LEGACY_CATEGORIES = ('reading', 'academics', 'exercise')
+CATEGORIES = LEGACY_CATEGORIES + ('family_fun', 'guitar', 'journal')
+JOURNAL_FIELDS = ('mood', 'tomorrow_goal', 'thankful', 'challenge', 'proud')
+def validate_date(date):
+    parsed = datetime.date.fromisoformat(date)
+    if parsed.isoformat() != date or parsed > datetime.date.today():
+        raise ValueError('Dates must be past or current dates.')
 def initial():
-    return {'version': 1, 'children': [{'id': f'child-{i}', 'name': f'Child {i}', 'days': {}} for i in (1, 2)]}
+    return {'version': 3, 'children': [{'id': f'child-{i}', 'name': f'Child {i}', 'days': {}, 'entries': {}} for i in (1, 2)]}
 def validate(data):
-    if not isinstance(data, dict) or data.get('version') != 1 or not isinstance(data.get('children'), list) or len(data['children']) != 2:
-        raise ValueError('Expected a version 1 backup with two children.')
+    if not isinstance(data, dict) or data.get('version') not in (1, 2, 3) or not isinstance(data.get('children'), list) or len(data['children']) != 2:
+        raise ValueError('Expected a version 1, 2 or 3 backup with two children.')
     clean = initial()
     for i, child in enumerate(data['children']):
         if not isinstance(child, dict) or child.get('id') != f'child-{i+1}':
@@ -22,15 +28,25 @@ def validate(data):
             raise ValueError('Names must contain 1–60 characters; days must be an object.')
         result = {}
         for date, values in days.items():
-            parsed = datetime.date.fromisoformat(date)
-            if parsed.isoformat() != date or parsed > datetime.date.today():
-                raise ValueError('Dates must be past or current dates.')
-            if not isinstance(values, dict) or set(values) != set(CATEGORIES):
-                raise ValueError('Each day needs all three activities.')
+            validate_date(date)
+            expected = set(LEGACY_CATEGORIES if data['version'] == 1 else CATEGORIES)
+            if not isinstance(values, dict) or set(values) != expected:
+                raise ValueError('Each day must contain the activities for its backup version.')
             if any(type(v) is not int or not 0 <= v <= 1440 for v in values.values()) or sum(values.values()) > 1440:
                 raise ValueError('Minutes must be whole numbers totaling at most 1440 per day.')
-            result[date] = dict(values)
-        clean['children'][i].update(name=name.strip(), days=result)
+            result[date] = {key: values.get(key, 0) for key in CATEGORIES}
+        entries = child.get('entries') if data['version'] == 3 else {}
+        if not isinstance(entries, dict):
+            raise ValueError('Journal entries must be an object.')
+        journal = {}
+        for date, entry in entries.items():
+            validate_date(date)
+            if not isinstance(entry, dict) or set(entry) != set(JOURNAL_FIELDS):
+                raise ValueError('Journal entries must contain all five prompts.')
+            if any(not isinstance(value, str) or len(value) > 2000 for value in entry.values()):
+                raise ValueError('Each journal answer must be text of at most 2000 characters.')
+            journal[date] = {key: entry[key] for key in JOURNAL_FIELDS}
+        clean['children'][i].update(name=name.strip(), days=result, entries=journal)
     return clean
 class Store:
     def __init__(self, path):

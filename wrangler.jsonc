@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "milanbalaji-activities",
+  "main": "cloudflare/worker.mjs",
+  "compatibility_date": "2026-11-07",
+  "workers_dev": true,
+  "preview_urls": false,
+  "routes": [{"pattern": "milanbalaji.pro", "custom_domain": true}],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  "vars": {"TIME_ZONE": "Europe/London"},
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "milanbalaji-activities",
+    "database_id": "766c0cd5-bb3d-40ba-8d4f-0d00c6de4c71",
+    "migrations_dir": "cloudflare/migrations"
+  }]
+}

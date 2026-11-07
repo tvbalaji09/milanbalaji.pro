@@ -1,0 +1,13 @@
+{
+  "name": "little-steps",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "test": "node --test tests/worker.test.mjs",
+    "check": "node --check public/app.js && wrangler deploy --dry-run",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {"wrangler": "^4.0.0"},
+  "engines": {"node": ">=22"}
+}
