@@ -122,7 +122,7 @@ class LegacyBackupTests(unittest.TestCase):
             path = Path(directory) / 'activities.json'
             path.write_text(json.dumps(legacy))
             store = server.Store(path)
-            self.assertEqual(store.data['version'], 3)
+            self.assertEqual(store.data['version'], 4)
             day = store.data['children'][0]['days']['2020-01-01']
             self.assertEqual(day, full_day(reading=30, academics=15, exercise=5))
             day.update(family_fun=10, guitar=20, journal=5)
@@ -155,3 +155,52 @@ class JournalTests(unittest.TestCase):
         old['version'] = 2
         for child in old['children']: child.pop('entries')
         self.assertEqual(server.validate(old)['children'][0]['entries'], {})
+
+class NewTrackingTests(unittest.TestCase):
+    def test_money_and_words_round_trip(self):
+        data=server.initial_balaji()
+        data['expenses']['2020-01-31']=[dict(id='a',description='Coffee',category='Food',amount_pence=10),dict(id='b',description='Lunch',category='Food',amount_pence=20)]
+        data['diesel']['2020-01-31']=[dict(id='fuel',amount_pence=4500)]
+        data['expenses']['2020-02-01']=[dict(id='c',description='Bus',category='Travel',amount_pence=200)]
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'balaji.json'
+            store=server.Store(path,server.initial_balaji,server.validate_balaji)
+            store.save(server.validate_balaji(data))
+            self.assertEqual(server.Store(path,server.initial_balaji,server.validate_balaji).data,data)
+        for amount in [-1,0,1.5,True,'30',100000000]:
+            bad=copy.deepcopy(data);bad['diesel']['2020-01-31'][0]['amount_pence']=amount
+            with self.assertRaises(ValueError):server.validate_balaji(bad)
+        legacy=dict(version=1,name='Balaji',days={},entries={})
+        self.assertEqual(server.validate_balaji(legacy)['expenses'],{})
+        words=server.initial();words['children'][0]['words']['2020-01-01']=[dict(id='word',word='curious',meaning='Wanting to learn more.')]
+        self.assertEqual(server.validate(words),words)
+        old=copy.deepcopy(words);old['version']=3
+        for child in old['children']:child.pop('words')
+        self.assertEqual(server.validate(old)['children'][0]['words'],{})
+
+class HealthRoutineTests(unittest.TestCase):
+    def test_health_routines_persist_and_validate(self):
+        data=server.initial_balaji()
+        data['days']['2020-01-01']=dict(connect=False,move=False,health=False,learn=False)
+        data['health_checks']['2020-01-01']=dict(diet=True,medicine=False,supplements=False,skin_care=False)
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'balaji.json'
+            store=server.Store(path,server.initial_balaji,server.validate_balaji)
+            store.save(server.validate_balaji(data))
+            self.assertEqual(server.Store(path,server.initial_balaji,server.validate_balaji).data,data)
+        invalid=copy.deepcopy(data)
+        invalid['days']['2020-01-01']['health']=True
+        with self.assertRaises(ValueError):server.validate_balaji(invalid)
+
+class PriorityTodoTests(unittest.TestCase):
+    def test_priority_completion_roundtrip(self):
+        data=server.initial_balaji()
+        data['priority_done']['2020-01-02']=['Call family']
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'balaji.json'
+            store=server.Store(path,server.initial_balaji,server.validate_balaji)
+            store.save(server.validate_balaji(data))
+            self.assertEqual(server.Store(path,server.initial_balaji,server.validate_balaji).data,data)
+        for items in [['same','same'],[True],['']]:
+            bad=copy.deepcopy(data);bad['priority_done']['2020-01-02']=items
+            with self.assertRaises(ValueError):server.validate_balaji(bad)

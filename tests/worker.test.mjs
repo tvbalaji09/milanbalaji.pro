@@ -4,8 +4,8 @@ import {DatabaseSync} from 'node:sqlite';
 import {readFileSync, mkdtempSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import worker, {validate, validateBalaji} from '../cloudflare/worker.mjs';
-const initial = () => ({version:3, children:[1,2].map(i=>({id:`child-${i}`,name:`Child ${i}`,days:{},entries:{}}))});
+import worker, {validate, validateBalaji, lookupDictionary} from '../cloudflare/worker.mjs';
+const initial = () => ({version:4, children:[1,2].map(i=>({id:`child-${i}`,name:`Child ${i}`,days:{},entries:{},words:{}}))});
 const day = values => ({reading:0, academics:0, exercise:0, family_fun:0, guitar:0, journal:0, ...values});
 const auth = 'Basic '+Buffer.from('family:test-password').toString('base64');
 function setup(t) {
@@ -101,7 +101,7 @@ test('legacy three-activity records load and restore without losing original min
   legacy.children[0].days['2020-01-01']={reading:35,academics:20,exercise:10};
   await app.env.DB.prepare('UPDATE activities SET body = ? WHERE id = 1 RETURNING id').bind(JSON.stringify(legacy)).first();
   const upgraded=await (await app.get()).json();
-  assert.equal(upgraded.version,3);
+  assert.equal(upgraded.version,4);
   assert.equal(upgraded.children[0].name,'Legacy child');
   assert.deepEqual(upgraded.children[0].days['2020-01-01'],day({reading:35,academics:20,exercise:10}));
   assert.equal((await app.save(legacy)).status,200);
@@ -144,7 +144,7 @@ test('Balaji goals and six journal fields persist without altering Milan or arch
   const app=setup(t), original=await (await app.get()).json();
   const response=await app.request('/api/balaji');assert.equal(response.status,200);
   const data=await response.json();
-  assert.deepEqual(data,{version:1,name:'Balaji',days:{},entries:{}});
+  assert.deepEqual(data,{version:2,name:'Balaji',days:{},entries:{},expenses:{},diesel:{},health_checks:{},priority_done:{}});
   data.days['2020-01-01']={connect:true,move:false,health:true,learn:false};
   data.entries['2020-01-01']={mood_energy:'Calm',win:'Finished a task',work_learning:'Learned something',health_fitness:'Walked',gratitude:'Family',tomorrow_priority:'Connect'};
   const post=(value,rev='0')=>app.request('/api/balaji',{method:'POST',headers:{'Content-Type':'application/json','X-Activities-Revision':rev},body:JSON.stringify(value)});
@@ -165,4 +165,64 @@ test('Balaji goals and six journal fields persist without altering Milan or arch
   assert.equal((await app.request('/assets/black-panther.png',{headers:{Authorization:''}})).status,401);
   assert.equal(await (await app.request('/balaji')).text(),'/balaji.html');
   const wrong=structuredClone(data);wrong.entries['2020-01-01'].gratitude='x'.repeat(2001);assert.throws(()=>validateBalaji(wrong));
+});
+
+test('spending and diesel survive restart and preserve exact pence across months',async t=>{
+  const app=setup(t),data=await(await app.request('/api/balaji')).json();
+  data.expenses['2020-01-31']=[{id:'a',description:'Coffee',category:'Food',amount_pence:10},{id:'b',description:'Lunch',category:'Food',amount_pence:20}];
+  data.diesel['2020-01-31']=[{id:'fuel-a',amount_pence:4500}];
+  data.expenses['2020-02-01']=[{id:'c',description:'Bus',category:'Travel',amount_pence:200}];
+  const post=(value,rev='0')=>app.request('/api/balaji',{method:'POST',headers:{'Content-Type':'application/json','X-Activities-Revision':rev},body:JSON.stringify(value)});
+  assert.equal((await post(data)).status,200);app.reopen();assert.deepEqual(await(await app.request('/api/balaji')).json(),data);
+  for(const amount of [-1,0,0.1,true,'30',100000000]){
+    const bad=structuredClone(data);bad.expenses['2020-01-31'][0].amount_pence=amount;assert.equal((await post(bad,'1')).status,400);
+  }
+  const duplicate=structuredClone(data);duplicate.diesel['2020-01-31'].push({id:'fuel-a',amount_pence:10});assert.equal((await post(duplicate,'1')).status,400);
+  assert.deepEqual(await(await app.request('/api/balaji')).json(),data);
+  const legacy={version:1,name:'Balaji',days:{},entries:{}};assert.deepEqual(validateBalaji(legacy),{version:2,name:'Balaji',days:{},entries:{},expenses:{},diesel:{},health_checks:{},priority_done:{}});
+});
+test('words persist with meanings, export shape and backward-compatible journals',async t=>{
+  const app=setup(t),data=initial();data.children[0].words['2020-01-01']=[{id:'word-a',word:'curious',meaning:'Wanting to learn more.'}];
+  assert.equal((await app.save(data)).status,200);app.reopen();assert.deepEqual(await(await app.get()).json(),data);
+  assert.deepEqual(data.children[1].words,{});
+  const bad=structuredClone(data);bad.children[0].words['2020-01-01'][0].meaning='x'.repeat(2001);assert.equal((await app.save(bad,'"1"')).status,400);
+  const legacy=initial();legacy.version=3;legacy.children.forEach(child=>delete child.words);legacy.children[0].entries['2020-01-01']={mood:'Happy',tomorrow_goal:'Read',thankful:'Family',challenge:'Maths',proud:'Tried'};
+  const upgraded=validate(legacy);assert.equal(upgraded.version,4);assert.deepEqual(upgraded.children[0].entries,legacy.children[0].entries);assert.deepEqual(upgraded.children[0].words,{});
+});
+test('dictionary lookups validate input and handle provider errors without exposing journals',async()=>{
+  let contacted=false;
+  const rejected=await lookupDictionary('../private',async()=>{contacted=true;});assert.equal(rejected.status,400);assert.equal(contacted,false);
+  const success=await lookupDictionary('curious',async url=>{assert.equal(url,'https://api.dictionaryapi.dev/api/v2/entries/en/curious');return Response.json([{meanings:[{partOfSpeech:'adjective',definitions:[{definition:'Wanting to learn more.'}]}]}]);});
+  assert.equal(success.status,200);assert.match((await success.json()).meaning,/Wanting to learn/);
+  assert.equal((await lookupDictionary('unknown',async()=>new Response('',{status:404}))).status,404);
+  assert.equal((await lookupDictionary('unknown',async()=>{throw new Error('network');})).status,503);
+});
+
+test('health routines save by date and complete Health only when all four are checked',async t=>{
+  const app=setup(t),data=await(await app.request('/api/balaji')).json();
+  const date='2020-01-01';
+  data.days[date]={connect:false,move:false,health:false,learn:false};
+  data.health_checks[date]={diet:true,medicine:false,supplements:false,skin_care:false};
+  const post=(value,rev)=>app.request('/api/balaji',{method:'POST',headers:{'Content-Type':'application/json','X-Activities-Revision':rev},body:JSON.stringify(value)});
+  assert.equal((await post(data,'0')).status,200);app.reopen();assert.deepEqual(await(await app.request('/api/balaji')).json(),data);
+  for(const key of Object.keys(data.health_checks[date]))data.health_checks[date][key]=true;
+  data.days[date].health=true;
+  assert.equal((await post(data,'1')).status,200);
+  const invalid=structuredClone(data);invalid.health_checks[date].medicine='yes';assert.equal((await post(invalid,'2')).status,400);
+  invalid.health_checks[date].medicine=false;assert.equal((await post(invalid,'2')).status,400);
+  assert.deepEqual(await(await app.request('/api/balaji')).json(),data);
+  const legacy={version:1,name:'Balaji',days:{'2020-01-02':{connect:false,move:false,health:true,learn:false}},entries:{}};
+  const upgraded=validateBalaji(legacy);assert.equal(upgraded.days['2020-01-02'].health,true);assert.deepEqual(upgraded.health_checks,{});
+});
+
+test('priority completion persists independently and rejects malformed backups',async t=>{
+ const app=setup(t),data=await(await app.request('/api/balaji')).json();
+ data.entries['2020-01-01']={mood_energy:'',win:'',work_learning:'',health_fitness:'',gratitude:'',tomorrow_priority:'Call family\nGo for a walk'};
+ data.priority_done['2020-01-02']=['Call family'];
+ const post=(value,rev)=>app.request('/api/balaji',{method:'POST',headers:{'Content-Type':'application/json','X-Activities-Revision':rev},body:JSON.stringify(value)});
+ assert.equal((await post(data,'0')).status,200);app.reopen();assert.deepEqual(await(await app.request('/api/balaji')).json(),data);
+ for(const invalid of [['Repeated','Repeated'],[true],[''],['x'.repeat(2001)]]){
+  const bad=structuredClone(data);bad.priority_done['2020-01-02']=invalid;assert.equal((await post(bad,'1')).status,400);
+ }
+ assert.deepEqual(await(await app.request('/api/balaji')).json(),data);
 });

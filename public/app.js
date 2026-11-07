@@ -7,6 +7,8 @@ const labels = ['Reading', 'Academics', 'Exercise', 'Family & Fun', 'Guitar', 'J
 const journalFields = ['mood', 'tomorrow_goal', 'thankful', 'challenge', 'proud'];
 const journalLabels = ['😊 Today’s mood', '🎯 Tomorrow’s little goal', '🙏 Something I’m thankful for', '🧩 Something challenging', '⭐ My proud moment'];
 const journalDrafts = new Map();
+const wordDrafts = new Map();
+let wordLookupTimer, wordLookupGeneration=0;
 const journalKey = () => `${child}:${selected}`;
 const blankEntry = () => Object.fromEntries(journalFields.map(key=>[key,'']));
 const readEntry = () => Object.fromEntries(journalFields.map(key=>[key,$(`entry-${key}`).value]));
@@ -32,7 +34,8 @@ async function save(candidate, {savedJournalKey=null, successMessage='Activities
     state=await request({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(candidate)});
     if(savedJournalKey !== null) journalDrafts.delete(savedJournalKey);
     message(successMessage);
-  } catch(error) { failed=true; message(`Save failed: ${error.message} Please retry.`,true); }
+    return true;
+  } catch(error) { failed=true; message(`Save failed: ${error.message} Please retry.`,true); return false; }
   finally {
     busy=false; render();
     if(failed){$('name').value=draftName;categories.forEach((k,i)=>{$(`minutes-${k}`).value=draftMinutes[i];});}
@@ -48,6 +51,7 @@ function render() {
   });
   renderAffirmations();
   renderJournal();
+  renderWords();
   $('name').value=state.children[child].name;
   $('date').max=localDate(new Date()); $('date').value=selected;
   const values={...empty(),...state.children[child].days[selected]};
@@ -80,8 +84,8 @@ function render() {
     const button=document.createElement('button');button.textContent=day;button.disabled=busy || date>localDate(new Date());
     button.className=(date===selected?'selected ':'')+(date===localDate(new Date())?'current':'');
     button.setAttribute('aria-pressed',String(date===selected));
-    const hasEntry=Boolean(state.children[child].entries[date]);
-    button.setAttribute('aria-label',`${date}: ${categories.map((k,i)=>`${labels[i]} ${record[k]} minutes`).join(', ')}${hasEntry?', journal entry saved':''}`);
+    const hasEntry=Boolean(state.children[child].entries[date] || state.children[child].words[date]?.length);
+    button.setAttribute('aria-label',`${date}: ${categories.map((k,i)=>`${labels[i]} ${record[k]} minutes`).join(', ')}${hasEntry?', journal or words saved':''}`);
     if(hasEntry){const marker=document.createElement('span');marker.className='entry-marker';marker.textContent='📝';marker.setAttribute('aria-hidden','true');button.append(marker);}
     const bars=document.createElement('span');bars.className='bars';
     categories.forEach((key,i)=>{const bar=document.createElement('span');bar.className='bar';bar.innerHTML=`<i style="--color:${colors[i]};--fill:${Math.min(record[key]/goals[i],1)*100}%"></i>`;bars.append(bar);});
@@ -97,11 +101,11 @@ $('minutes-form').onsubmit=event=>{event.preventDefault();const candidate=struct
 function moveMonth(offset){const [y,m]=month.split('-').map(Number);const d=new Date(0);d.setFullYear(y,m-1+offset,1);month=localDate(d).slice(0,7);render();}
 $('prev').onclick=()=>moveMonth(-1);$('next').onclick=()=>moveMonth(1);
 $('today').onclick=()=>{selected=localDate(new Date());month=selected.slice(0,7);render();};
-$('export').onclick=()=>{if(journalDrafts.size){message('Save your journal drafts before exporting a backup.',true);return;}const url=URL.createObjectURL(new Blob([JSON.stringify(state,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=`activities-${localDate(new Date())}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);message('JSON backup exported.');};
+$('export').onclick=()=>{if(journalDrafts.size||wordDrafts.size){message('Save or cancel your journal and word drafts before exporting a backup.',true);return;}const url=URL.createObjectURL(new Blob([JSON.stringify(state,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=`activities-${localDate(new Date())}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);message('JSON backup exported.');};
 $('restore').onclick=()=>$('backup').click();
 $('backup').onchange=async()=>{
   const file=$('backup').files[0];if(!file)return;
-  try{if(file.size>5000000)throw new Error('Backup is larger than 5 MB.');const candidate=JSON.parse(await file.text());if(journalDrafts.size){message('Save your journal drafts before restoring a backup.',true);return;}if(confirm('Replace Milan’s records and archived second-child records, including journals with this backup? Export first if you want to keep the current records.'))await save(candidate);}
+  try{if(file.size>5000000)throw new Error('Backup is larger than 5 MB.');const candidate=JSON.parse(await file.text());if(journalDrafts.size||wordDrafts.size){message('Save or cancel your journal and word drafts before restoring a backup.',true);return;}if(confirm('Replace Milan’s records and archived second-child records, including journals and words with this backup? Export first if you want to keep the current records.'))await save(candidate);}
   catch(error){message(`Restore failed: ${error.message}`,true);}
   finally{$('backup').value='';}
 };
@@ -182,23 +186,85 @@ $('journal-form').onsubmit=event=>{
   else delete candidate.children[child].entries[selected];
   save(candidate,{savedJournalKey:journalKey(),successMessage:'Journal saved.'});
 };
-window.addEventListener('beforeunload',event=>{if(journalDrafts.size){event.preventDefault();event.returnValue='';}});
+window.addEventListener('beforeunload',event=>{if(journalDrafts.size||wordDrafts.size){event.preventDefault();event.returnValue='';}});
 function downloadText(text,filename){
   const url=URL.createObjectURL(new Blob([text],{type:'text/plain;charset=utf-8'}));
   const link=document.createElement('a');link.href=url;link.download=filename;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
-function journalText(date,entry){return `${date}\n${'='.repeat(20)}\n\n`+journalFields.map((key,i)=>`${journalLabels[i]}\n${entry[key] || '(Not answered)'}\n`).join('\n');}
+function journalText(date,entry){const words=state.children[child].words[date]||[];return `${date}\n${'='.repeat(20)}\n\n`+journalFields.map((key,i)=>`${journalLabels[i]}\n${entry[key] || '(Not answered)'}\n`).join('\n')+(words.length?'\n📚 My words\n'+words.map(item=>`${item.word}: ${item.meaning}`).join('\n\n'):'');}
 $('export-entry').onclick=()=>{
-  if(journalDrafts.has(journalKey())){message('Save this journal before exporting it.',true);return;}
-  const entry=state.children[child].entries[selected];
+  if(journalDrafts.has(journalKey())||wordDrafts.has(journalKey())){message('Save this journal and its words before exporting it.',true);return;}
+  const entry=state.children[child].entries[selected] || (state.children[child].words[selected]?.length?blankEntry():null);
   if(!entry){message('There is no saved journal for this day yet.',true);return;}
   downloadText(`${state.children[child].name} — My journal\n\n`+journalText(selected,entry),`journal-${state.children[child].id}-${selected}.txt`);
   message('This day’s journal exported.');
 };
 $('export-journals').onclick=()=>{
-  if([...journalDrafts.keys()].some(key=>key.startsWith(`${child}:`))){message('Save this child’s journal drafts before exporting.',true);return;}
-  const entries=Object.entries(state.children[child].entries).sort(([a],[b])=>a.localeCompare(b));
+  if([...journalDrafts.keys(),...wordDrafts.keys()].some(key=>key.startsWith(`${child}:`))){message('Save this child’s journal drafts before exporting.',true);return;}
+  const dates=[...new Set([...Object.keys(state.children[child].entries),...Object.keys(state.children[child].words)])].sort();
+  const entries=dates.map(date=>[date,state.children[child].entries[date]||blankEntry()]);
   if(!entries.length){message('This child has no saved journals yet.',true);return;}
   downloadText(`${state.children[child].name} — My journal\n\n`+entries.map(([date,entry])=>journalText(date,entry)).join('\n\n'),`journals-${state.children[child].id}.txt`);
   message('All saved journals for this child exported.');
 };
+
+
+function dailyWord(){
+  const day=Math.floor(new Date(selected+'T12:00:00Z').getTime()/86400000);
+  return window.MilanWords[((day%window.MilanWords.length)+window.MilanWords.length)%window.MilanWords.length];
+}
+function renderWords(){
+  const daily=dailyWord(),items=state.children[child].words[selected]||[],draft=wordDrafts.get(journalKey());
+  $('daily-word').textContent=daily.word;$('daily-meaning').textContent=daily.meaning;
+  $('add-daily-word').disabled=busy||items.some(item=>item.word.toLowerCase()===daily.word.toLowerCase());
+  $('add-daily-word').textContent=items.some(item=>item.word.toLowerCase()===daily.word.toLowerCase())?'Added ✓':'Add to my words +';
+  $('new-word').value=draft?.word||'';$('new-meaning').value=draft?.meaning||'';
+  $('save-word').textContent=draft?.id?'Save word':'Add word +';$('cancel-word').hidden=!draft;
+  $('saved-words').replaceChildren();
+  if(!items.length){const empty=document.createElement('p');empty.className='word-empty';empty.textContent='Your word collection for this day starts here.';$('saved-words').append(empty);}
+  for(const item of items){
+    const card=document.createElement('div');card.className='saved-word';const content=document.createElement('div'),title=document.createElement('h4'),meaning=document.createElement('p');title.textContent=item.word;meaning.textContent=item.meaning;content.append(title,meaning);
+    const controls=document.createElement('div');controls.className='word-controls';
+    const edit=document.createElement('button');edit.type='button';edit.textContent='Edit';edit.disabled=busy;edit.setAttribute('aria-label',`Edit word ${item.word}`);edit.onclick=()=>{wordDrafts.set(journalKey(),{...item});renderWords();$('new-word').focus();};
+    const remove=document.createElement('button');remove.type='button';remove.textContent='Remove';remove.disabled=busy;remove.setAttribute('aria-label',`Remove word ${item.word}`);remove.onclick=async()=>{const candidate=structuredClone(state);candidate.children[child].words[selected]=items.filter(value=>value.id!==item.id);if(!candidate.children[child].words[selected].length)delete candidate.children[child].words[selected];if(await save(candidate,{successMessage:'Word removed.'})){if(wordDrafts.get(journalKey())?.id===item.id)wordDrafts.delete(journalKey());renderWords();}};
+    controls.append(edit,remove);card.append(content,controls);$('saved-words').append(card);
+  }
+}
+function captureWordDraft(){
+  const word=$('new-word').value,meaning=$('new-meaning').value,existing=wordDrafts.get(journalKey());
+  if(!word&&!meaning&&!existing?.id)wordDrafts.delete(journalKey());else wordDrafts.set(journalKey(),{id:existing?.id,word,meaning});
+  $('cancel-word').hidden=!wordDrafts.has(journalKey());
+}
+async function findMeaning(){
+  const word=$('new-word').value.trim(),key=journalKey(),generation=++wordLookupGeneration;
+  if(!/^[a-zA-Z]+(?:['-][a-zA-Z]+)*$/.test(word)||word.length>80){$('word-status').textContent='Enter one English word to find its meaning.';return;}
+  $('word-status').textContent='Finding the meaning…';
+  try{
+    const offline=window.MilanWords.find(item=>item.word.toLowerCase()===word.toLowerCase());
+    let meaning;
+    if(offline)meaning=offline.meaning;
+    else{
+      const response=await fetch('/api/dictionary?word='+encodeURIComponent(word),{signal:AbortSignal.timeout(7000)});
+      const data=await response.json();if(!response.ok)throw new Error(data.error);meaning=data.meaning;
+    }
+    if(key!==journalKey()||generation!==wordLookupGeneration)return;
+    $('new-meaning').value=meaning;captureWordDraft();$('word-status').textContent=offline?'Meaning ready from the offline word list. Select Add word to save it.':'Meaning ready from Free Dictionary API. You can edit it before adding.';
+  }catch(error){if(key===journalKey()&&generation===wordLookupGeneration)$('word-status').textContent=error.name==='TimeoutError'?'The dictionary took too long. Try again or enter a meaning yourself.':error.message;}
+}
+$('new-word').oninput=()=>{clearTimeout(wordLookupTimer);wordLookupGeneration++;$('new-meaning').value='';captureWordDraft();if($('new-word').value.trim().length>=2)wordLookupTimer=setTimeout(findMeaning,700);};
+$('new-meaning').oninput=()=>{wordLookupGeneration++;captureWordDraft();};
+$('new-word').onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();$('save-word').click();}};
+$('lookup-word').onclick=()=>{clearTimeout(wordLookupTimer);findMeaning();};
+$('cancel-word').onclick=()=>{clearTimeout(wordLookupTimer);wordLookupGeneration++;wordDrafts.delete(journalKey());renderWords();$('word-status').textContent='Word draft cleared.';};
+async function addWord(word,meaning,id=null){
+  word=word.trim();meaning=meaning.trim();
+  if(!word||!meaning){$('word-status').textContent='Add a word and its meaning first.';return;}
+  const items=state.children[child].words[selected]||[];
+  if(items.some(item=>item.id!==id&&item.word.toLowerCase()===word.toLowerCase())){$('word-status').textContent='That word is already saved for this day.';return;}
+  if(!id&&items.length>=100){$('word-status').textContent='You have saved 100 words for this day.';return;}
+  const candidate=structuredClone(state),item={id:id||crypto.randomUUID(),word,meaning};
+  candidate.children[child].words[selected]=id?items.map(value=>value.id===id?item:value):[...items,item];
+  if(await save(candidate,{successMessage:'Word saved.'})){wordDrafts.delete(journalKey());renderWords();$('word-status').textContent='Word and meaning saved for this day.';}
+}
+$('save-word').onclick=()=>{clearTimeout(wordLookupTimer);wordLookupGeneration++;addWord($('new-word').value,$('new-meaning').value,wordDrafts.get(journalKey())?.id);};
+$('add-daily-word').onclick=()=>{const daily=dailyWord();if(wordDrafts.has(journalKey())){$('word-status').textContent='Save or cancel your typed word before adding the daily word.';return;}addWord(daily.word,daily.meaning);};

@@ -17,10 +17,10 @@ export function today(timeZone = 'Europe/London') {
 }
 
 export function validate(data, currentDate = today()) {
-  if (!isObject(data) || ![1,2,3].includes(data.version) || !Array.isArray(data.children) || data.children.length !== 2) {
-    throw new Error('Expected a version 1, 2 or 3 backup with exactly two children.');
+  if (!isObject(data) || ![1,2,3,4].includes(data.version) || !Array.isArray(data.children) || data.children.length !== 2) {
+    throw new Error('Expected a version 1, 2, 3 or 4 backup with exactly two children.');
   }
-  return {version:3, children:data.children.map((child, i) => {
+  return {version:4, children:data.children.map((child, i) => {
     if (!isObject(child) || child.id !== `child-${i+1}` || typeof child.name !== 'string' ||
         !child.name.trim() || [...child.name.trim()].length > 60 || !isObject(child.days)) {
       throw new Error('Invalid child identifier, name (1–60 characters), or daily records.');
@@ -36,7 +36,7 @@ export function validate(data, currentDate = today()) {
       }
       days[date] = Object.fromEntries(CATEGORIES.map(k => [k,values[k] ?? 0]));
     }
-    const sourceEntries = data.version === 3 ? child.entries : {};
+    const sourceEntries = data.version >= 3 ? child.entries : {};
     if (!isObject(sourceEntries)) throw new Error('Journal entries must be an object.');
     const entries = {};
     for (const [date,entry] of Object.entries(sourceEntries)) {
@@ -47,15 +47,47 @@ export function validate(data, currentDate = today()) {
       }
       entries[date] = Object.fromEntries(JOURNAL_FIELDS.map(key => [key,entry[key]]));
     }
-    return {id:child.id, name:child.name.trim(), days, entries};
+    const words = {};
+    const sourceWords = data.version >= 4 ? child.words : {};
+    if(!isObject(sourceWords)) throw new Error('Word collections must be an object.');
+    for(const [date,items] of Object.entries(sourceWords)) {
+      validateDate(date,currentDate);
+      validateItems(items);
+      words[date]=items.map(item=>{
+        if(!isObject(item) || Object.keys(item).length!==3 || !validId(item.id) || typeof item.word!=='string' || !item.word.trim() || item.word.length>80 || typeof item.meaning!=='string' || !item.meaning.trim() || item.meaning.length>2000) throw new Error('Each word needs an id, a word (80 characters max), and a meaning (2000 characters max).');
+        return {id:item.id,word:item.word.trim(),meaning:item.meaning.trim()};
+      });
+    }
+    return {id:child.id, name:child.name.trim(), days, entries, words};
   })};
 }
 
+const EXPENSE_CATEGORIES = ['Food','Travel','Shopping','Home','Fun','Other'];
+function validId(id){return typeof id==='string' && /^[a-zA-Z0-9_-]{1,80}$/.test(id);}
+function validateItems(items){
+  if(!Array.isArray(items)||items.length>100||items.some(item=>!isObject(item))||new Set(items.map(item=>item.id)).size!==items.length) throw new Error('Use at most 100 uniquely identified entries per day.');
+}
+function validateMoney(source,currentDate,diesel=false){
+  if(!isObject(source))throw new Error('Spending collections must be an object.');
+  const result={};
+  for(const [date,items] of Object.entries(source)){
+    validateDate(date,currentDate);validateItems(items);
+    result[date]=items.map(item=>{
+      if(!validId(item.id)||!Number.isSafeInteger(item.amount_pence)||item.amount_pence<1||item.amount_pence>99999999)throw new Error('Amounts must be between £0.01 and £999,999.99.');
+      if(diesel){if(Object.keys(item).length!==2)throw new Error('Diesel entries need only an id and amount.');return {id:item.id,amount_pence:item.amount_pence};}
+      if(Object.keys(item).length!==4||typeof item.description!=='string'||!item.description.trim()||item.description.length>120||!EXPENSE_CATEGORIES.includes(item.category))throw new Error('Add a description (120 characters max) and valid category.');
+      return {id:item.id,description:item.description.trim(),category:item.category,amount_pence:item.amount_pence};
+    });
+  }
+  return result;
+}
+
 const BALAJI_GOALS = ['connect','move','health','learn'];
+const HEALTH_CHECKS = ['diet','medicine','supplements','skin_care'];
 const BALAJI_FIELDS = ['mood_energy','win','work_learning','health_fitness','gratitude','tomorrow_priority'];
 export function validateBalaji(data, currentDate=today()) {
-  if(!isObject(data) || data.version!==1 || data.name!=='Balaji' || !isObject(data.days) || !isObject(data.entries)) {
-    throw new Error('Expected a Balaji version 1 backup.');
+  if(!isObject(data) || ![1,2].includes(data.version) || data.name!=='Balaji' || !isObject(data.days) || !isObject(data.entries)) {
+    throw new Error('Expected a Balaji version 1 or 2 backup.');
   }
   const days={}, entries={};
   for(const [date,values] of Object.entries(data.days)) {
@@ -72,7 +104,24 @@ export function validateBalaji(data, currentDate=today()) {
     }
     entries[date]=Object.fromEntries(BALAJI_FIELDS.map(key=>[key,entry[key]]));
   }
-  return {version:1,name:'Balaji',days,entries};
+  const expenses=validateMoney(data.version===2?data.expenses:{},currentDate);
+  const diesel=validateMoney(data.version===2?data.diesel:{},currentDate,true);
+  const health_checks={};
+  if(data.health_checks!==undefined&&!isObject(data.health_checks))throw new Error('Health checks must be an object.');
+  for(const [date,checks] of Object.entries(data.health_checks||{})){
+    validateDate(date,currentDate);
+    if(!isObject(checks)||Object.keys(checks).length!==4||HEALTH_CHECKS.some(key=>!Object.hasOwn(checks,key)||typeof checks[key]!=='boolean'))throw new Error('Each health log needs four true/false checks.');
+    health_checks[date]=Object.fromEntries(HEALTH_CHECKS.map(key=>[key,checks[key]]));
+    if(!days[date]||days[date].health!==HEALTH_CHECKS.every(key=>checks[key]))throw new Error('Health completion must match its four routine checks.');
+  }
+  const priority_done={};
+  if(data.priority_done!==undefined&&!isObject(data.priority_done))throw new Error('Priority completion must be an object.');
+  for(const [date,items] of Object.entries(data.priority_done||{})){
+    validateDate(date,currentDate);
+    if(!Array.isArray(items)||items.length>100||items.some(item=>typeof item!=='string'||!item.trim()||item.length>2000)||new Set(items).size!==items.length)throw new Error('Priority completion needs up to 100 unique task texts.');
+    priority_done[date]=[...items];
+  }
+  return {version:2,name:'Balaji',days,entries,expenses,diesel,health_checks,priority_done};
 }
 
 function json(data, status = 200, headers = {}) {
@@ -114,6 +163,19 @@ async function readBody(request) {
   return JSON.parse(new TextDecoder('utf-8', {fatal:true}).decode(bytes));
 }
 
+export async function lookupDictionary(word, fetcher=fetch) {
+  if(typeof word!=='string'||!/^[a-zA-Z]+(?:['-][a-zA-Z]+)*$/.test(word)||word.length>80) return json({error:'Enter one English word (letters, apostrophes or hyphens).'},400);
+  try {
+    const response=await fetcher('https://api.dictionaryapi.dev/api/v2/entries/en/'+encodeURIComponent(word.toLowerCase()),{signal:AbortSignal.timeout(5000),redirect:'error'});
+    if(response.status===404)return json({error:'No meaning found. Try another word, or write its meaning below.'},404);
+    if(!response.ok)throw new Error('Dictionary unavailable');
+    const data=await response.json();
+    const definitions=data?.[0]?.meanings?.flatMap(meaning=>(meaning.definitions||[]).slice(0,1).map(item=>`${meaning.partOfSpeech}: ${item.definition}`)).slice(0,2);
+    if(!definitions?.length)throw new Error('No definition');
+    return json({word,meaning:definitions.join('\n').slice(0,2000),source:'Free Dictionary API'});
+  } catch {return json({error:'Dictionary unavailable. You can write a meaning yourself and still save the word.'},503);}
+}
+
 async function handle(request, env) {
   const url = new URL(request.url);
   if (url.protocol !== 'https:' && !['localhost','127.0.0.1','[::1]'].includes(url.hostname)) {
@@ -125,12 +187,16 @@ async function handle(request, env) {
   if (!await authorized(request,env)) {
     return json({error:'Sign in to your family activity journal.'},401, {'WWW-Authenticate':'Basic realm="Little steps", charset="UTF-8"'});
   }
+  if(url.pathname==='/api/dictionary'){
+    if(request.method!=='GET')return json({error:'Method not allowed.'},405,{Allow:'GET'});
+    return lookupDictionary(url.searchParams.get('word'));
+  }
   const isBalaji=url.pathname==='/api/balaji';
   const table=isBalaji?'balaji':'activities';
   const validator=isBalaji?validateBalaji:validate;
   if (url.pathname !== '/api/activities' && !isBalaji) {
     if (!['GET','HEAD'].includes(request.method)) return json({error:'Method not allowed.'},405,{Allow:'GET, HEAD'});
-    if (!['/','/kids-activity.html','/app.js','/styles.css','/balaji','/balaji/','/balaji.html','/balaji.js','/balaji.css','/assets/black-panther.png','/assets/batman.png','/assets/deadpool.png','/assets/spider-man.png', '/assets/milan-hero.png', '/assets/milan-swing.png', '/assets/milan-leap.png'].includes(url.pathname)) return json({error:'Not found.'},404);
+    if (!['/','/kids-activity.html','/app.js','/styles.css','/wordbank.js','/balaji','/balaji/','/balaji.html','/balaji.js','/balaji.css','/assets/black-panther.png','/assets/batman.png','/assets/deadpool.png','/assets/spider-man.png', '/assets/milan-hero.png', '/assets/milan-swing.png', '/assets/milan-leap.png'].includes(url.pathname)) return json({error:'Not found.'},404);
     if (url.pathname === '/') url.pathname = '/kids-activity.html';
     if (url.pathname === '/balaji' || url.pathname === '/balaji/') url.pathname = '/balaji.html';
     return env.ASSETS.fetch(new Request(url, request));
