@@ -22,6 +22,7 @@ class ApplicationTests(unittest.TestCase):
     def start(self):
         self.http = ThreadingHTTPServer(('127.0.0.1', 0), server.Handler)
         self.http.store = server.Store(self.path)
+        self.http.balaji_store = server.Store(self.path.parent / 'balaji.json', server.initial_balaji, server.validate_balaji)
         self.thread = threading.Thread(target=self.http.serve_forever, daemon=True)
         self.thread.start()
         self.url = f'http://127.0.0.1:{self.http.server_port}'
@@ -60,6 +61,25 @@ class ApplicationTests(unittest.TestCase):
         self.assertEqual(self.save(backup), data)
         self.stop(); self.start()
         self.assertEqual(json.loads(self.get()), backup)
+    def test_balaji_api_and_restart_isolation(self):
+        original = self.path.read_bytes()
+        with urlopen(self.url + '/api/balaji') as response: data = json.load(response)
+        data['days']['2020-01-01'] = dict(connect=True, move=False, health=True, learn=False)
+        data['entries']['2020-01-01'] = dict(mood_energy='Calm', win='Progress', work_learning='Python', health_fitness='Walk', gratitude='Family', tomorrow_priority='Connect')
+        def save_balaji(value):
+            request = Request(self.url + '/api/balaji', data=json.dumps(value).encode(), headers={'Content-Type':'application/json'})
+            with urlopen(request) as response: return json.load(response)
+        self.assertEqual(save_balaji(data), data)
+        self.stop(); self.start()
+        with urlopen(self.url + '/api/balaji') as response: self.assertEqual(json.load(response), data)
+        self.assertEqual(self.path.read_bytes(), original)
+        invalid = copy.deepcopy(data)
+        invalid['days']['2020-01-01']['move'] = 1
+        with self.assertRaises(HTTPError) as error: save_balaji(invalid)
+        self.assertEqual(error.exception.code, 400)
+        self.assertIn(b'Balaji', self.get('/balaji'))
+        self.assertTrue(self.get('/assets/black-panther.png').startswith(bytes([137,80,78,71])))
+
     def test_invalid_restores_preserve_disk(self):
         before = self.path.read_bytes()
         variants = [None, {}, {'version':1,'children':[]}]

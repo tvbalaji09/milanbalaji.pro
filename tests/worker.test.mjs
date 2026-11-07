@@ -4,7 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {readFileSync, mkdtempSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import worker, {validate} from '../cloudflare/worker.mjs';
+import worker, {validate, validateBalaji} from '../cloudflare/worker.mjs';
 const initial = () => ({version:3, children:[1,2].map(i=>({id:`child-${i}`,name:`Child ${i}`,days:{},entries:{}}))});
 const day = values => ({reading:0, academics:0, exercise:0, family_fun:0, guitar:0, journal:0, ...values});
 const auth = 'Basic '+Buffer.from('family:test-password').toString('base64');
@@ -12,7 +12,8 @@ function setup(t) {
   const folder=mkdtempSync(join(tmpdir(),'activities-worker-'));
   let db;
   function reopen() { db?.close(); db=new DatabaseSync(join(folder,'test.sqlite')); }
-  reopen();db.exec(readFileSync(new URL('../cloudflare/migrations/0001_activities.sql',import.meta.url),'utf8'));
+  reopen();
+  for(const file of ['0001_activities.sql','0002_balaji.sql'])db.exec(readFileSync(new URL('../cloudflare/migrations/'+file,import.meta.url),'utf8'));
   t.after(()=>{db.close();rmSync(folder,{recursive:true});});
   // Execute the Worker's exact prepared SQL against a real file-backed SQLite database.
   const env={APP_USERNAME:'family',APP_PASSWORD:'test-password',TIME_ZONE:'Europe/London',
@@ -137,4 +138,31 @@ test('journals persist, restore, isolate children and reject invalid entries ato
   assert.deepEqual(await (await app.get()).json(),data);
   const v2=initial();v2.version=2;v2.children.forEach(child=>delete child.entries);
   assert.deepEqual(validate(v2).children.map(child=>child.entries),[{},{}]);
+});
+
+test('Balaji goals and six journal fields persist without altering Milan or archived records',async t=>{
+  const app=setup(t), original=await (await app.get()).json();
+  const response=await app.request('/api/balaji');assert.equal(response.status,200);
+  const data=await response.json();
+  assert.deepEqual(data,{version:1,name:'Balaji',days:{},entries:{}});
+  data.days['2020-01-01']={connect:true,move:false,health:true,learn:false};
+  data.entries['2020-01-01']={mood_energy:'Calm',win:'Finished a task',work_learning:'Learned something',health_fitness:'Walked',gratitude:'Family',tomorrow_priority:'Connect'};
+  const post=(value,rev='0')=>app.request('/api/balaji',{method:'POST',headers:{'Content-Type':'application/json','X-Activities-Revision':rev},body:JSON.stringify(value)});
+  assert.equal((await post(data)).status,200);
+  app.reopen();assert.deepEqual(await (await app.request('/api/balaji')).json(),data);
+  assert.deepEqual(await (await app.get()).json(),original);
+  assert.equal((await app.get()).headers.get('X-Activities-Revision'),'0');
+  assert.equal((await post(data)).status,409);
+  const invalid=structuredClone(data);invalid.days['2020-01-01'].move=30;
+  assert.equal((await post(invalid,'1')).status,400);
+  assert.equal((await post(original,'1')).status,400);
+  const cleared={version:1,name:'Balaji',days:{},entries:{}};
+  assert.equal((await post(cleared,'1')).status,200);
+  assert.equal((await post(data,'2')).status,200);
+  assert.deepEqual(await (await app.request('/api/balaji')).json(),data);
+  assert.equal((await app.request('/api/balaji',{headers:{Authorization:''}})).status,401);
+  assert.equal((await app.request('/balaji',{headers:{Authorization:''}})).status,401);
+  assert.equal((await app.request('/assets/black-panther.png',{headers:{Authorization:''}})).status,401);
+  assert.equal(await (await app.request('/balaji')).text(),'/balaji.html');
+  const wrong=structuredClone(data);wrong.entries['2020-01-01'].gratitude='x'.repeat(2001);assert.throws(()=>validateBalaji(wrong));
 });

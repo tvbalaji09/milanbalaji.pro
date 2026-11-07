@@ -101,7 +101,7 @@ $('export').onclick=()=>{if(journalDrafts.size){message('Save your journal draft
 $('restore').onclick=()=>$('backup').click();
 $('backup').onchange=async()=>{
   const file=$('backup').files[0];if(!file)return;
-  try{if(file.size>5000000)throw new Error('Backup is larger than 5 MB.');const candidate=JSON.parse(await file.text());if(journalDrafts.size){message('Save your journal drafts before restoring a backup.',true);return;}if(confirm('Replace both children’s names, activities, and journals with this backup? Export first if you want to keep the current records.'))await save(candidate);}
+  try{if(file.size>5000000)throw new Error('Backup is larger than 5 MB.');const candidate=JSON.parse(await file.text());if(journalDrafts.size){message('Save your journal drafts before restoring a backup.',true);return;}if(confirm('Replace Milan’s records and archived second-child records, including journals with this backup? Export first if you want to keep the current records.'))await save(candidate);}
   catch(error){message(`Restore failed: ${error.message}`,true);}
   finally{$('backup').value='';}
 };

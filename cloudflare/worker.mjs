@@ -51,6 +51,30 @@ export function validate(data, currentDate = today()) {
   })};
 }
 
+const BALAJI_GOALS = ['connect','move','health','learn'];
+const BALAJI_FIELDS = ['mood_energy','win','work_learning','health_fitness','gratitude','tomorrow_priority'];
+export function validateBalaji(data, currentDate=today()) {
+  if(!isObject(data) || data.version!==1 || data.name!=='Balaji' || !isObject(data.days) || !isObject(data.entries)) {
+    throw new Error('Expected a Balaji version 1 backup.');
+  }
+  const days={}, entries={};
+  for(const [date,values] of Object.entries(data.days)) {
+    validateDate(date,currentDate);
+    if(!isObject(values) || Object.keys(values).length!==4 || BALAJI_GOALS.some(key=>!Object.hasOwn(values,key) || typeof values[key]!=='boolean')) {
+      throw new Error('Each day needs four true/false goals.');
+    }
+    days[date]=Object.fromEntries(BALAJI_GOALS.map(key=>[key,values[key]]));
+  }
+  for(const [date,entry] of Object.entries(data.entries)) {
+    validateDate(date,currentDate);
+    if(!isObject(entry) || Object.keys(entry).length!==6 || BALAJI_FIELDS.some(key=>!Object.hasOwn(entry,key) || typeof entry[key]!=='string' || [...entry[key]].length>2000)) {
+      throw new Error('Each journal needs six text answers, at most 2000 characters each.');
+    }
+    entries[date]=Object.fromEntries(BALAJI_FIELDS.map(key=>[key,entry[key]]));
+  }
+  return {version:1,name:'Balaji',days,entries};
+}
+
 function json(data, status = 200, headers = {}) {
   return Response.json(data, {status, headers});
 }
@@ -101,16 +125,20 @@ async function handle(request, env) {
   if (!await authorized(request,env)) {
     return json({error:'Sign in to your family activity journal.'},401, {'WWW-Authenticate':'Basic realm="Little steps", charset="UTF-8"'});
   }
-  if (url.pathname !== '/api/activities') {
+  const isBalaji=url.pathname==='/api/balaji';
+  const table=isBalaji?'balaji':'activities';
+  const validator=isBalaji?validateBalaji:validate;
+  if (url.pathname !== '/api/activities' && !isBalaji) {
     if (!['GET','HEAD'].includes(request.method)) return json({error:'Method not allowed.'},405,{Allow:'GET, HEAD'});
-    if (!['/','/kids-activity.html','/app.js','/styles.css'].includes(url.pathname)) return json({error:'Not found.'},404);
+    if (!['/','/kids-activity.html','/app.js','/styles.css','/balaji','/balaji/','/balaji.html','/balaji.js','/balaji.css','/assets/black-panther.png','/assets/batman.png','/assets/deadpool.png','/assets/spider-man.png', '/assets/milan-hero.png', '/assets/milan-swing.png', '/assets/milan-leap.png'].includes(url.pathname)) return json({error:'Not found.'},404);
     if (url.pathname === '/') url.pathname = '/kids-activity.html';
+    if (url.pathname === '/balaji' || url.pathname === '/balaji/') url.pathname = '/balaji.html';
     return env.ASSETS.fetch(new Request(url, request));
   }
   if (request.method === 'GET') {
-    const row = await env.DB.prepare('SELECT body, revision FROM activities WHERE id = 1').first();
+    const row = await env.DB.prepare(`SELECT body, revision FROM ${table} WHERE id = 1`).first();
     if (!row) return json({error:'Database not initialized. Apply the D1 migrations.'},503);
-    return json(validate(JSON.parse(row.body),today(env.TIME_ZONE)),200,{ETag:`"${row.revision}"`, 'X-Activities-Revision':String(row.revision)});
+    return json(validator(JSON.parse(row.body),today(env.TIME_ZONE)),200,{ETag:`"${row.revision}"`, 'X-Activities-Revision':String(row.revision)});
   }
   if (request.method !== 'POST') return json({error:'Method not allowed.'},405,{Allow:'GET, POST'});
   const origin = request.headers.get('Origin');
@@ -126,10 +154,10 @@ async function handle(request, env) {
     : /^(?:W\/)?"(\d+)"$/.exec(request.headers.get('If-Match') || '');
   if (!match || !Number.isSafeInteger(Number(match[1]))) return json({error:'Reload the page before saving.'},428);
   let data;
-  try { data = validate(await readBody(request),today(env.TIME_ZONE)); }
+  try { data = validator(await readBody(request),today(env.TIME_ZONE)); }
   catch(error) { return json({error:error.message},400); }
   // A conditional single-row update keeps restores atomic and prevents stale tabs overwriting newer saves.
-  const row = await env.DB.prepare('UPDATE activities SET body = ?, revision = revision + 1 WHERE id = 1 AND revision = ? RETURNING revision')
+  const row = await env.DB.prepare(`UPDATE ${table} SET body = ?, revision = revision + 1 WHERE id = 1 AND revision = ? RETURNING revision`)
     .bind(JSON.stringify(data),Number(match[1])).first();
   if (!row) return json({error:'Another tab or device saved newer records. Reload before editing again.'},409);
   return json(data,200,{ETag:`"${row.revision}"`, 'X-Activities-Revision':String(row.revision)});

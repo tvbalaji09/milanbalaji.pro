@@ -48,13 +48,33 @@ def validate(data):
             journal[date] = {key: entry[key] for key in JOURNAL_FIELDS}
         clean['children'][i].update(name=name.strip(), days=result, entries=journal)
     return clean
+BALAJI_GOALS = ('connect', 'move', 'health', 'learn')
+BALAJI_FIELDS = ('mood_energy', 'win', 'work_learning', 'health_fitness', 'gratitude', 'tomorrow_priority')
+def initial_balaji():
+    return dict(version=1, name='Balaji', days={}, entries={})
+def validate_balaji(data):
+    if not isinstance(data, dict) or data.get('version') != 1 or data.get('name') != 'Balaji' or not isinstance(data.get('days'), dict) or not isinstance(data.get('entries'), dict):
+        raise ValueError('Expected a Balaji version 1 backup.')
+    clean = initial_balaji()
+    for date, values in data['days'].items():
+        validate_date(date)
+        if not isinstance(values, dict) or set(values) != set(BALAJI_GOALS) or any(type(value) is not bool for value in values.values()):
+            raise ValueError('Each day needs four true/false goals.')
+        clean['days'][date] = dict(values)
+    for date, entry in data['entries'].items():
+        validate_date(date)
+        if not isinstance(entry, dict) or set(entry) != set(BALAJI_FIELDS) or any(not isinstance(value, str) or len(value) > 2000 for value in entry.values()):
+            raise ValueError('Each journal needs six text answers, at most 2000 characters each.')
+        clean['entries'][date] = dict(entry)
+    return clean
+
 class Store:
-    def __init__(self, path):
+    def __init__(self, path, factory=initial, validator=validate):
         self.path, self.lock = Path(path), threading.Lock()
         if self.path.exists():
-            self.data = validate(json.loads(self.path.read_text()))
+            self.data = validator(json.loads(self.path.read_text()))
         else:
-            self.save(initial())
+            self.save(factory())
     def save(self, data):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         fd, temporary = tempfile.mkstemp(prefix='.activities-', dir=self.path.parent)
@@ -88,16 +108,19 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
     def do_GET(self):
-        if self.path == '/api/activities':
-            with self.server.store.lock:
-                self.reply(200, self.server.store.data)
-        elif self.path in ('/', '/kids-activity.html', '/app.js', '/styles.css'):
+        if self.path in ('/api/activities', '/api/balaji'):
+            store = self.server.balaji_store if self.path == '/api/balaji' else self.server.store
+            with store.lock:
+                self.reply(200, store.data)
+        elif self.path in ('/', '/kids-activity.html', '/app.js', '/styles.css', '/balaji', '/balaji/', '/balaji.html', '/balaji.js', '/balaji.css', '/assets/black-panther.png', '/assets/batman.png', '/assets/deadpool.png', '/assets/spider-man.png', '/assets/milan-hero.png', '/assets/milan-swing.png', '/assets/milan-leap.png'):
             if self.path == '/': self.path = '/kids-activity.html'
+            if self.path in ('/balaji', '/balaji/'):
+                self.path = '/balaji.html'
             super().do_GET()
         else:
             self.send_error(404)
     def do_POST(self):
-        if self.path != '/api/activities':
+        if self.path not in ('/api/activities', '/api/balaji'):
             self.send_error(404)
             return
         origin = self.headers.get('Origin')
@@ -110,8 +133,11 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             size = int(self.headers.get('Content-Length', '0'))
             if not 0 < size <= 5_000_000: raise ValueError('Backup must be 1 byte to 5 MB.')
-            data = validate(json.loads(self.rfile.read(size)))
-            with self.server.store.lock: self.server.store.save(data)
+            is_balaji = self.path == '/api/balaji'
+            validator = validate_balaji if is_balaji else validate
+            store = self.server.balaji_store if is_balaji else self.server.store
+            data = validator(json.loads(self.rfile.read(size)))
+            with store.lock: store.save(data)
             self.reply(200, data)
         except (ValueError, TypeError, UnicodeError) as error:
             self.reply(400, {'error': str(error)})
@@ -124,6 +150,7 @@ def main():
     args = parser.parse_args()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.store = Store(ROOT / 'data' / 'activities.json')
+    server.balaji_store = Store(ROOT / 'data' / 'balaji.json', initial_balaji, validate_balaji)
     print(f'Activity tracker: http://{args.host}:{server.server_port}', flush=True)
     try: server.serve_forever()
     except KeyboardInterrupt: pass

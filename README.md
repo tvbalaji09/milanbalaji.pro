@@ -176,3 +176,38 @@ A 📝 marker identifies dates with saved journal entries. Selecting the day loa
 - **Export JSON** includes both profiles, all activity minutes, and all saved journals; use **Restore JSON** to recover the entire backup. Text exports are for reading and cannot be restored. Save drafts before exporting or restoring.
 
 Version 3 adds an `entries` object to each child, keyed by ISO date. Every entry contains the string fields `mood`, `tomorrow_goal`, `thankful`, `challenge`, and `proud`. Existing version 1/2 records upgrade with empty journal collections. No destructive database migration is needed. Restoring an older backup replaces the current records and clears journals that were not included in that older backup; export a current JSON backup first if needed.
+
+## Milan and Balaji pages
+
+Milan’s missions remain at `/`. The second-child selector has been removed; its historical records remain archived in the existing activities document and JSON backups. Balaji’s independent space is at `/balaji` (also `/balaji/`). Balaji’s page links to Milan’s missions. Milan’s page does not show a link to Balaji’s space; open `/balaji` directly.
+
+Balaji has four daily completion checkboxes: **Connect, Move, Health, Learn**, plus six optional journal prompts: **Mood & energy, Today’s win, Work & learning, Health & fitness, Gratitude, Tomorrow’s priority**. Choose any current or past day in the calendar to view or change that day’s records. Goals save immediately; reflections use **Save my reflection**. Journal drafts stay in memory while browsing dates or saving goals; save them before leaving the page.
+
+Balaji’s **Backup JSON / Restore backup** affects only his goals and reflections. It cannot overwrite Milan or the archived child’s records. Daily/all-reflection text exports are also available. Keep separate JSON backups for the two pages. Both hosted pages use the existing family login; these are separate journals within one household account, not separate authentication accounts.
+
+Local setup and review:
+
+```sh
+python3 server.py --port 8010
+```
+
+Open http://127.0.0.1:8010/balaji and http://127.0.0.1:8010/. Local adult records save atomically to ignored `data/balaji.json`; existing records remain in `data/activities.json`. All supplied PNGs are copied into `public/assets/` and served locally, with no external asset requests.
+
+For Cloudflare publication **after reviewing the local preview**, initialize the new independent table before deploying:
+
+```sh
+npx wrangler d1 migrations apply milanbalaji-activities --remote
+npm run deploy
+```
+
+Migration `0002_balaji.sql` creates and initializes a separate `balaji` table. It does not alter the `activities` table or remove any family records. The short `app.milanbalaji.workers.dev/balaji` alias automatically uses the same backend. Each journal document retains the existing 1 MB hosted request limit, with 2,000 characters per journal prompt. Uploaded artwork is included unchanged.
+
+### Milan’s comic-book redesign
+
+Milan’s page uses the three supplied Spider-Man PNGs at `public/assets/milan-hero.png`, `milan-swing.png`, and `milan-leap.png`. The images are copied unchanged and served locally. The design uses red/blue comic panels, halftone backgrounds, yellow encouragement cards, six mission cards, and the existing journal and calendar. It uses no flashing/strobing effects or external fonts/assets. Balaji retains his separate darker design.
+
+Review both pages locally at http://127.0.0.1:8010/ and http://127.0.0.1:8010/balaji before publishing. Desktop, tablet, and phone layout checks cover all three new images, rings, journal prompts, affirmations, and calendar navigation.
+
+### Publication status
+
+The reviewed Milan redesign and Balaji page were published on 7 November 2026. Live pages are https://milanbalaji.pro/ and https://milanbalaji.pro/balaji; the short Workers aliases remain available at https://app.milanbalaji.workers.dev/ and `/balaji`. Migration `0002_balaji.sql` has been applied to the production database. HTTPS and login challenges were verified for both pages, both APIs, and the new image assets. The existing family login is unchanged.
