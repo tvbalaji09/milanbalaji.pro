@@ -166,8 +166,9 @@ async function readBody(request) {
 export async function lookupDictionary(word, fetcher=fetch) {
   if(typeof word!=='string'||!/^[a-zA-Z]+(?:['-][a-zA-Z]+)*$/.test(word)||word.length>80) return json({error:'Enter one English word (letters, apostrophes or hyphens).'},400);
   try {
-    const response=await fetcher('https://api.dictionaryapi.dev/api/v2/entries/en/'+encodeURIComponent(word.toLowerCase()),{signal:AbortSignal.timeout(5000),redirect:'error'});
+    const response=await fetcher('https://api.dictionaryapi.dev/api/v2/entries/en/'+encodeURIComponent(word.toLowerCase()),{headers:{'User-Agent':'MilanDailyMissions/1.0','Accept':'application/json'},signal:AbortSignal.timeout(5000),redirect:'error'});
     if(response.status===404)return json({error:'No meaning found. Try another word, or write its meaning below.'},404);
+    if(response.status===429)return json({error:'The online dictionary is busy. Try one of the 500 offline words or try again shortly.'},503);
     if(!response.ok)throw new Error('Dictionary unavailable');
     const data=await response.json();
     const definitions=data?.[0]?.meanings?.flatMap(meaning=>(meaning.definitions||[]).slice(0,1).map(item=>`${meaning.partOfSpeech}: ${item.definition}`)).slice(0,2);
@@ -196,7 +197,7 @@ async function handle(request, env) {
   const validator=isBalaji?validateBalaji:validate;
   if (url.pathname !== '/api/activities' && !isBalaji) {
     if (!['GET','HEAD'].includes(request.method)) return json({error:'Method not allowed.'},405,{Allow:'GET, HEAD'});
-    if (!['/','/kids-activity.html','/app.js','/styles.css','/wordbank.js','/balaji','/balaji/','/balaji.html','/balaji.js','/balaji.css','/assets/black-panther.png','/assets/batman.png','/assets/deadpool.png','/assets/spider-man.png', '/assets/milan-hero.png', '/assets/milan-swing.png', '/assets/milan-leap.png'].includes(url.pathname)) return json({error:'Not found.'},404);
+    if (!['/','/kids-activity.html','/app.js','/styles.css','/wordbank.js','/balaji','/balaji/','/balaji.html','/balaji.js','/balaji-vocabulary.js','/balaji.css','/assets/black-panther.png','/assets/batman.png','/assets/deadpool.png','/assets/spider-man.png', '/assets/milan-hero.png', '/assets/milan-swing.png', '/assets/milan-leap.png'].includes(url.pathname)) return json({error:'Not found.'},404);
     if (url.pathname === '/') url.pathname = '/kids-activity.html';
     if (url.pathname === '/balaji' || url.pathname === '/balaji/') url.pathname = '/balaji.html';
     return env.ASSETS.fetch(new Request(url, request));

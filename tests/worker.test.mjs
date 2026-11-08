@@ -192,9 +192,10 @@ test('words persist with meanings, export shape and backward-compatible journals
 test('dictionary lookups validate input and handle provider errors without exposing journals',async()=>{
   let contacted=false;
   const rejected=await lookupDictionary('../private',async()=>{contacted=true;});assert.equal(rejected.status,400);assert.equal(contacted,false);
-  const success=await lookupDictionary('curious',async url=>{assert.equal(url,'https://api.dictionaryapi.dev/api/v2/entries/en/curious');return Response.json([{meanings:[{partOfSpeech:'adjective',definitions:[{definition:'Wanting to learn more.'}]}]}]);});
+  const success=await lookupDictionary('curious',async (url,options)=>{assert.equal(options.headers['User-Agent'],'MilanDailyMissions/1.0');assert.equal(options.headers.Accept,'application/json');assert.equal(url,'https://api.dictionaryapi.dev/api/v2/entries/en/curious');return Response.json([{meanings:[{partOfSpeech:'adjective',definitions:[{definition:'Wanting to learn more.'}]}]}]);});
   assert.equal(success.status,200);assert.match((await success.json()).meaning,/Wanting to learn/);
   assert.equal((await lookupDictionary('unknown',async()=>new Response('',{status:404}))).status,404);
+  assert.equal((await lookupDictionary('unknown',async()=>new Response('',{status:429}))).status,503);
   assert.equal((await lookupDictionary('unknown',async()=>{throw new Error('network');})).status,503);
 });
 

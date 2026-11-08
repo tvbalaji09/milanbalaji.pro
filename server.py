@@ -187,7 +187,7 @@ class Handler(SimpleHTTPRequestHandler):
             store = self.server.balaji_store if self.path == '/api/balaji' else self.server.store
             with store.lock:
                 self.reply(200, store.data)
-        elif self.path in ('/', '/kids-activity.html', '/app.js', '/styles.css', '/wordbank.js', '/balaji', '/balaji/', '/balaji.html', '/balaji.js', '/balaji.css', '/assets/black-panther.png', '/assets/batman.png', '/assets/deadpool.png', '/assets/spider-man.png', '/assets/milan-hero.png', '/assets/milan-swing.png', '/assets/milan-leap.png'):
+        elif self.path in ('/', '/kids-activity.html', '/app.js', '/styles.css', '/wordbank.js', '/balaji', '/balaji/', '/balaji.html', '/balaji.js','/balaji-vocabulary.js', '/balaji.css', '/assets/black-panther.png', '/assets/batman.png', '/assets/deadpool.png', '/assets/spider-man.png', '/assets/milan-hero.png', '/assets/milan-swing.png', '/assets/milan-leap.png'):
             if self.path == '/': self.path = '/kids-activity.html'
             if self.path in ('/balaji', '/balaji/'):
                 self.path = '/balaji.html'

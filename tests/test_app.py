@@ -66,6 +66,8 @@ class ApplicationTests(unittest.TestCase):
         with urlopen(self.url + '/api/balaji') as response: data = json.load(response)
         data['days']['2020-01-01'] = dict(connect=True, move=False, health=True, learn=False)
         data['entries']['2020-01-01'] = dict(mood_energy='Calm', win='Progress', work_learning='Python', health_fitness='Walk', gratitude='Family', tomorrow_priority='Connect')
+        data['expenses']['2020-01-01'] = [dict(id='spend-check', description='Test spend', category='Other', amount_pence=1234)]
+        data['diesel']['2020-01-01'] = [dict(id='diesel-check', amount_pence=4000)]
         def save_balaji(value):
             request = Request(self.url + '/api/balaji', data=json.dumps(value).encode(), headers={'Content-Type':'application/json'})
             with urlopen(request) as response: return json.load(response)

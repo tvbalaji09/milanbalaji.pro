@@ -244,7 +244,7 @@ Older Health completions remain recorded as generic completions and display “P
 
 The hero header summarises the selected date’s four main goal statuses and four Health routine statuses. It updates after saves and when selecting another date; it does not create separate records or preselect routines from older generic Health completions.
 
-The header includes 20 vocabulary words with meanings and example sentences. They default to a date-based selection, work offline, and have a button to browse another word. The earlier kind-reminder panel has been removed. These reading aids do not change saved journals or goals. Vocabulary suggests trying the word in the existing Work & learning reflection. The Health card dimensions are unchanged.
+The header includes 500 vocabulary words with meanings and example sentences. They default to a date-based selection, work offline, and have a button to browse another word. The earlier kind-reminder panel has been removed. These reading aids do not change saved journals or goals. Vocabulary suggests trying the word in the existing Work & learning reflection. The Health card dimensions are unchanged.
 
 
 ### Priority to-dos and date-only navigation
@@ -258,3 +258,15 @@ Completions are stored in optional `priority_done` date-keyed arrays in Balaji�
 ### Latest published update
 
 The reviewed daily spending and diesel logs, Milan’s saved words and dictionary lookup, Health routine checkboxes, and priority to-dos were published on 7 November 2026. Balaji now uses date-picker navigation and no longer displays the calendar or kind-reminder panel. Both pages and the dictionary endpoint retain the existing login. No SQL migration was required; existing records upgrade through the validators when read and saved.
+
+### 500-word collection and spending verification
+
+Balaji’s **One word wiser** uses `public/balaji-vocabulary.js`: exactly 500 unique words, each with a plain-English meaning and a practical usage example. The entire 66 KB collection is bundled locally, works offline, and does not add records to D1. The date-based selection and browse button traverse all 500 entries. The on-card counter shows the word’s position in the collection.
+
+The vocabulary test checks the count, uniqueness, meanings and example sentences. Spending was also verified through browser Add actions, reload, a full local server restart with the same saved test file, month switching, and diesel totals. A read-only production query confirmed existing saved expense records without reading their descriptions or amounts. The live records were not changed by these tests.
+
+### Milan’s One word wiser
+
+The same journal vocabulary section now contains both the child-friendly daily word and a **One word wiser** card using the 500-word offline collection. Browse another word or add the displayed word, meaning, and usage example to the selected day. These saved words are included in journal text exports and JSON backups.
+
+Typed-word lookup checks both offline collections first, so words in the collection do not require the online dictionary. Other words still depend on the external provider and can require a retry or manual definition if it is unavailable. The hosted dictionary request now sends explicit identification and JSON headers and provides a specific busy message for rate limiting. Browser checks confirmed offline lookup while the provider was deliberately blocked, all 500 card entries, saving/reload, and desktop/mobile layouts.

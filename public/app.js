@@ -8,7 +8,7 @@ const journalFields = ['mood', 'tomorrow_goal', 'thankful', 'challenge', 'proud'
 const journalLabels = ['😊 Today’s mood', '🎯 Tomorrow’s little goal', '🙏 Something I’m thankful for', '🧩 Something challenging', '⭐ My proud moment'];
 const journalDrafts = new Map();
 const wordDrafts = new Map();
-let wordLookupTimer, wordLookupGeneration=0;
+let wordLookupTimer, wordLookupGeneration=0, milanWiserDate='', milanWiserOffset=0;
 const journalKey = () => `${child}:${selected}`;
 const blankEntry = () => Object.fromEntries(journalFields.map(key=>[key,'']));
 const readEntry = () => Object.fromEntries(journalFields.map(key=>[key,$(`entry-${key}`).value]));
@@ -214,7 +214,9 @@ function dailyWord(){
   return window.MilanWords[((day%window.MilanWords.length)+window.MilanWords.length)%window.MilanWords.length];
 }
 function renderWords(){
+  if(milanWiserDate!==selected){milanWiserDate=selected;milanWiserOffset=0;}
   const daily=dailyWord(),items=state.children[child].words[selected]||[],draft=wordDrafts.get(journalKey());
+  renderMilanWiser(items);
   $('daily-word').textContent=daily.word;$('daily-meaning').textContent=daily.meaning;
   $('add-daily-word').disabled=busy||items.some(item=>item.word.toLowerCase()===daily.word.toLowerCase());
   $('add-daily-word').textContent=items.some(item=>item.word.toLowerCase()===daily.word.toLowerCase())?'Added ✓':'Add to my words +';
@@ -240,7 +242,9 @@ async function findMeaning(){
   if(!/^[a-zA-Z]+(?:['-][a-zA-Z]+)*$/.test(word)||word.length>80){$('word-status').textContent='Enter one English word to find its meaning.';return;}
   $('word-status').textContent='Finding the meaning…';
   try{
-    const offline=window.MilanWords.find(item=>item.word.toLowerCase()===word.toLowerCase());
+    const childWord=window.MilanWords.find(item=>item.word.toLowerCase()===word.toLowerCase());
+    const shared=globalThis.BalajiVocabulary.find(item=>item[0].toLowerCase()===word.toLowerCase());
+    const offline=childWord || (shared?{meaning:shared[1]+'\nExample: '+shared[2]}:null);
     let meaning;
     if(offline)meaning=offline.meaning;
     else{
@@ -268,3 +272,18 @@ async function addWord(word,meaning,id=null){
 }
 $('save-word').onclick=()=>{clearTimeout(wordLookupTimer);wordLookupGeneration++;addWord($('new-word').value,$('new-meaning').value,wordDrafts.get(journalKey())?.id);};
 $('add-daily-word').onclick=()=>{const daily=dailyWord();if(wordDrafts.has(journalKey())){$('word-status').textContent='Save or cancel your typed word before adding the daily word.';return;}addWord(daily.word,daily.meaning);};
+
+
+function milanWiserWord(){
+ const day=Math.floor(new Date(selected+'T12:00:00Z').getTime()/86400000),words=globalThis.BalajiVocabulary;
+ const index=((day+milanWiserOffset)%words.length+words.length)%words.length;
+ return {index,word:words[index][0],meaning:words[index][1],example:words[index][2]};
+}
+function renderMilanWiser(items){
+ const entry=milanWiserWord(),added=items.some(item=>item.word.toLowerCase()===entry.word.toLowerCase());
+ $('milan-wiser-position').textContent=`${entry.index+1} / ${globalThis.BalajiVocabulary.length}`;
+ $('milan-wiser-word').textContent=entry.word;$('milan-wiser-meaning').textContent=entry.meaning;$('milan-wiser-example').textContent='“'+entry.example+'”';
+ $('add-milan-wiser').disabled=busy||added;$('next-milan-wiser').disabled=busy;$('add-milan-wiser').textContent=added?'Added ✓':'Add this word +';
+}
+$('next-milan-wiser').onclick=()=>{milanWiserOffset++;renderMilanWiser(state.children[child].words[selected]||[]);};
+$('add-milan-wiser').onclick=()=>{if(wordDrafts.has(journalKey())){$('word-status').textContent='Save or cancel your typed word first.';return;}const entry=milanWiserWord();addWord(entry.word,entry.meaning+'\nExample: '+entry.example);};

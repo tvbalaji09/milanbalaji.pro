@@ -192,28 +192,8 @@ window.addEventListener('focus',()=>{const current=dateKey(new Date());if(curren
 $('money-date').onchange=()=>{if($('money-date').value&&$('money-date').checkValidity()){selected=$('money-date').value;render();}};
 
 
-const fieldVocabulary=[
- ['equanimity','A calm, steady state of mind, especially in a difficult situation.','I tried to approach the unexpected change with equanimity.'],
- ['deliberate','Done thoughtfully and intentionally, rather than by chance.','I made a deliberate choice to take a break before replying.'],
- ['discernment','The ability to judge carefully and notice what matters.','Discernment helped me choose which task needed my attention.'],
- ['tenacity','The quality of continuing with determination when something is difficult.','Her tenacity helped her finish a challenging project.'],
- ['pragmatic','Focused on practical solutions that can work in real situations.','We took a pragmatic approach and started with one small change.'],
- ['serendipity','A fortunate discovery or event that happens by chance.','Finding that useful book was a moment of serendipity.'],
- ['nuance','A small but meaningful difference in feeling, meaning, or expression.','Listening carefully helped me understand the nuance in his reply.'],
- ['resilient','Able to recover or adapt after difficulties.','Being resilient can include asking for help when things are hard.'],
- ['intentional','Done with a clear purpose or conscious choice.','I want to be more intentional about spending time with family.'],
- ['perspective','A particular way of seeing or understanding something.','A short walk gave me a different perspective on the problem.'],
- ['incremental','Happening through small additions or steps.','Incremental improvements made the routine easier to maintain.'],
- ['conscientious','Careful, responsible, and concerned with doing something well.','He was conscientious about checking the details.'],
- ['receptive','Willing to listen to or consider new ideas.','I stayed receptive to feedback while learning a new skill.'],
- ['resourceful','Good at finding effective ways to solve problems.','A resourceful colleague found a simpler way to do the task.'],
- ['articulate','Able to express ideas clearly and effectively.','Writing a few notes helped me articulate my thoughts.'],
- ['fortitude','Courage and strength when facing difficulty.','She showed fortitude while working through an uncertain time.'],
- ['sustainable','Able to continue over time without using up the resources it needs.','A shorter daily routine felt more sustainable than an ambitious plan.'],
- ['reciprocity','A mutual exchange of help, kindness, or consideration.','Reciprocity helps a friendship feel supportive on both sides.'],
- ['candid','Honest and direct in a sincere way.','We had a candid conversation about what needed to change.'],
- ['circumspect','Careful to consider possible consequences before acting.','I took a circumspect approach before committing to another project.']
-];
+const fieldVocabulary=globalThis.BalajiVocabulary;
+
 let fieldNotesDate='',vocabularyOffset=0;
 function renderFieldNotes(){
  if(fieldNotesDate!==selected){fieldNotesDate=selected;vocabularyOffset=0;}
@@ -227,7 +207,9 @@ function renderFieldNotes(){
  const title=document.createElement('p');title.textContent='Health routines';$('header-health-status').append(title);
  for(const [key,label] of healthDefs){const status=document.createElement('span');status.textContent=`${checks[key]?'✓':'○'} ${label}`;status.className=checks[key]?'complete':'';$('header-health-status').append(status);}
  if(!state.health_checks[selected]&&values.health){const legacy=document.createElement('p');legacy.className='note-foot';legacy.textContent='Health was previously marked complete; individual routines were not recorded.';$('header-health-status').append(legacy);}
- const [word,meaning,example]=fieldVocabulary[index(fieldVocabulary.length,vocabularyOffset)];
+ const wordIndex=index(fieldVocabulary.length,vocabularyOffset);
+ const [word,meaning,example]=fieldVocabulary[wordIndex];
+ $('header-vocabulary-position').textContent=`Word ${wordIndex+1} of ${fieldVocabulary.length}`;
  $('header-vocabulary-word').textContent=word;$('header-vocabulary-meaning').textContent=meaning;$('header-vocabulary-example').textContent='“'+example+'”';
 }
 $('next-header-word').onclick=()=>{vocabularyOffset++;renderFieldNotes();};
