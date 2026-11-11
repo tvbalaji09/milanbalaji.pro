@@ -13,7 +13,7 @@ function setup(t) {
   let db;
   function reopen() { db?.close(); db=new DatabaseSync(join(folder,'test.sqlite')); }
   reopen();
-  for(const file of ['0001_activities.sql','0002_balaji.sql'])db.exec(readFileSync(new URL('../cloudflare/migrations/'+file,import.meta.url),'utf8'));
+  for(const file of ['0001_activities.sql','0002_balaji.sql','0003_shanthi.sql'])db.exec(readFileSync(new URL('../cloudflare/migrations/'+file,import.meta.url),'utf8'));
   t.after(()=>{db.close();rmSync(folder,{recursive:true});});
   // Execute the Worker's exact prepared SQL against a real file-backed SQLite database.
   const env={APP_USERNAME:'family',APP_PASSWORD:'test-password',TIME_ZONE:'Europe/London',
@@ -226,4 +226,45 @@ test('priority completion persists independently and rejects malformed backups',
   const bad=structuredClone(data);bad.priority_done['2020-01-02']=invalid;assert.equal((await post(bad,'1')).status,400);
  }
  assert.deepEqual(await(await app.request('/api/balaji')).json(),data);
+});
+
+ test('dictionary fallback asset is served behind login and allowed by CSP', async t => {
+  const app=setup(t);
+  const response=await app.request('/dictionary.js');
+  assert.equal(response.status,200);
+  assert.equal(await response.text(),'/dictionary.js');
+  assert.match(response.headers.get('Content-Security-Policy'),/connect-src 'self' https:\/\/api\.dictionaryapi\.dev;/);
+  const denied=await worker.fetch(new Request('https://example.test/dictionary.js'),app.env);
+  assert.equal(denied.status,401);
+});
+
+ test('Shanthi food diary persists, restores, rejects stale or invalid saves and isolates profiles', async t => {
+ const app=setup(t),before=await(await app.get()).json(),adult=await(await app.request('/api/balaji')).json();
+ const initial=await(await app.request('/api/shanthi')).json();
+ assert.deepEqual(initial,{version:1,target:1550,days:{}});
+ const entry={id:'food-1',name:'Idli',unit:'1 medium',kcal:75,quantity:2,meal:'Breakfast'};
+ const diary={...initial,days:{'2020-01-01':[entry]}};
+ const post=(data,revision)=>app.request('/api/shanthi',{method:'POST',headers:{'Content-Type':'application/json','X-Activities-Revision':String(revision)},body:JSON.stringify(data)});
+ assert.equal((await post(diary,0)).status,200);app.reopen();
+ assert.deepEqual(await(await app.request('/api/shanthi')).json(),diary);
+ assert.equal((await post(initial,0)).status,409);
+ const invalid=structuredClone(diary);invalid.days['2020-01-01'][0].quantity=-1;
+ assert.equal((await post(invalid,1)).status,400);
+ assert.deepEqual(await(await app.request('/api/shanthi')).json(),diary);
+ assert.equal((await post(initial,1)).status,200);
+ assert.equal((await post(diary,2)).status,200);app.reopen();
+ assert.deepEqual(await(await app.request('/api/shanthi')).json(),diary);
+ assert.deepEqual(await(await app.get()).json(),before);
+ assert.deepEqual(await(await app.request('/api/balaji')).json(),adult);
+ assert.equal(await(await app.request('/shanthi')).text(),'/shanthi.html');
+ assert.equal((await worker.fetch(new Request('https://example.test/api/shanthi'),app.env)).status,401);
+ assert.equal((await app.request('/data/shanthi.json')).status,404);
+});
+
+test('nutrition endpoint requires login, limits methods and uses UK food data without keys',async t=>{
+ const app=setup(t);
+ assert.equal((await worker.fetch(new Request('https://example.test/api/nutrition?query=idli'),app.env)).status,401);
+ assert.equal((await app.request('/api/nutrition?query=idli',{method:'POST'})).status,405);
+ const response=await app.request('/api/nutrition?query=chapati');assert.equal(response.status,200);assert.equal((await response.json()).source,'UK CoFID 2021');
+ assert.equal((await app.request('/api/nutrition?query=a')).status,400);
 });

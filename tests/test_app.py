@@ -23,9 +23,42 @@ class ApplicationTests(unittest.TestCase):
         self.http = ThreadingHTTPServer(('127.0.0.1', 0), server.Handler)
         self.http.store = server.Store(self.path)
         self.http.balaji_store = server.Store(self.path.parent / 'balaji.json', server.initial_balaji, server.validate_balaji)
+        self.http.shanthi_store = server.Store(self.path.parent / 'shanthi.json', server.initial_shanthi, server.validate_shanthi)
         self.thread = threading.Thread(target=self.http.serve_forever, daemon=True)
         self.thread.start()
         self.url = f'http://127.0.0.1:{self.http.server_port}'
+    def test_shanthi_save_restart_restore_isolation(self):
+        def get(path):
+            with urlopen(self.url + path) as response:
+                return json.load(response)
+        def post(data):
+            req = Request(self.url + '/api/shanthi', data=json.dumps(data).encode(), headers={'Content-Type': 'application/json'})
+            with urlopen(req) as response:
+                return json.load(response)
+        before, adult = get('/api/activities'), get('/api/balaji')
+        empty = get('/api/shanthi')
+        diary = copy.deepcopy(empty)
+        diary['days']['2020-01-01'] = [dict(id='food-1', name='Idli', unit='1 medium', meal='Breakfast', kcal=75, quantity=2)]
+        self.assertEqual(post(diary), diary)
+        self.stop()
+        self.start()
+        self.assertEqual(get('/api/shanthi'), diary)
+        post(empty)
+        self.assertEqual(post(diary), diary)
+        invalid = copy.deepcopy(diary)
+        invalid['days']['2020-01-01'][0]['kcal'] = -2
+        with self.assertRaises(HTTPError) as caught:
+            post(invalid)
+        self.assertEqual(caught.exception.code, 400)
+        self.assertEqual(get('/api/shanthi'), diary)
+        self.assertEqual(get('/api/activities'), before)
+        self.assertEqual(get('/api/balaji'), adult)
+        with urlopen(self.url + '/shanthi') as response:
+            self.assertEqual(response.status, 200)
+        with self.assertRaises(HTTPError) as caught:
+            urlopen(self.url + '/data/shanthi.json')
+        self.assertEqual(caught.exception.code, 404)
+
     def stop(self):
         self.http.shutdown()
         self.http.server_close()

@@ -248,8 +248,7 @@ async function findMeaning(){
     let meaning;
     if(offline)meaning=offline.meaning;
     else{
-      const response=await fetch('/api/dictionary?word='+encodeURIComponent(word),{signal:AbortSignal.timeout(7000)});
-      const data=await response.json();if(!response.ok)throw new Error(data.error);meaning=data.meaning;
+      const data=await globalThis.MilanDictionary.lookup(word);meaning=data.meaning;
     }
     if(key!==journalKey()||generation!==wordLookupGeneration)return;
     $('new-meaning').value=meaning;captureWordDraft();$('word-status').textContent=offline?'Meaning ready from the offline word list. Select Add word to save it.':'Meaning ready from Free Dictionary API. You can edit it before adding.';

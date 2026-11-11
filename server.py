@@ -1,3 +1,4 @@
+from nutrition import search_nutrition
 import argparse
 import re
 from urllib.parse import urlsplit, parse_qs, quote
@@ -139,6 +140,24 @@ def lookup_dictionary(word):
     except Exception:
         return 503, {'error':'Dictionary unavailable. You can write a meaning yourself and still save the word.'}
 
+def initial_shanthi():
+    return {'version': 1, 'target': 1550, 'days': {}}
+
+def validate_shanthi(data):
+    if not isinstance(data, dict) or data.get('version') != 1 or data.get('target') != 1550 or not isinstance(data.get('days'), dict):
+        raise ValueError('Expected a Shanthi backup with a 1550 calorie target.')
+    clean = initial_shanthi()
+    for date, entries in data['days'].items():
+        validate_date(date)
+        validate_items(entries)
+        result = []
+        for e in entries:
+            if not isinstance(e.get('name'), str) or not e['name'].strip() or len(e['name']) > 100 or not isinstance(e.get('unit'), str) or not e['unit'].strip() or len(e['unit']) > 100 or e.get('meal') not in ('Breakfast', 'Lunch', 'Dinner', 'Snacks') or type(e.get('kcal')) is not int or not 0 <= e['kcal'] <= 10000 or type(e.get('quantity')) not in (int, float) or not 0.01 <= e['quantity'] <= 100 or abs(e['quantity'] * 100 - round(e['quantity'] * 100)) > 0.000001:
+                raise ValueError('Foods need a name, portion, meal, calories (0–10000) and quantity (0.01–100).')
+            result.append(dict(id=e['id'], name=e['name'].strip(), unit=e['unit'].strip(), meal=e['meal'], kcal=e['kcal'], quantity=e['quantity']))
+        clean['days'][date] = result
+    return clean
+
 class Store:
     def __init__(self, path, factory=initial, validator=validate):
         self.path, self.lock = Path(path), threading.Lock()
@@ -179,23 +198,29 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
     def do_GET(self):
+        if urlsplit(self.path).path == '/api/nutrition':
+            code, data = search_nutrition(parse_qs(urlsplit(self.path).query).get('query', [''])[0])
+            self.reply(code, data)
+            return
         if urlsplit(self.path).path == '/api/dictionary':
             code, data = lookup_dictionary(parse_qs(urlsplit(self.path).query).get('word', [''])[0])
             self.reply(code, data)
             return
-        if self.path in ('/api/activities', '/api/balaji'):
-            store = self.server.balaji_store if self.path == '/api/balaji' else self.server.store
+        if self.path in ('/api/activities', '/api/balaji', '/api/shanthi'):
+            store = self.server.shanthi_store if self.path == '/api/shanthi' else self.server.balaji_store if self.path == '/api/balaji' else self.server.store
             with store.lock:
                 self.reply(200, store.data)
-        elif self.path in ('/', '/kids-activity.html', '/app.js', '/styles.css', '/wordbank.js', '/balaji', '/balaji/', '/balaji.html', '/balaji.js','/balaji-vocabulary.js', '/balaji.css', '/assets/black-panther.png', '/assets/batman.png', '/assets/deadpool.png', '/assets/spider-man.png', '/assets/milan-hero.png', '/assets/milan-swing.png', '/assets/milan-leap.png'):
+        elif self.path in ('/', '/kids-activity.html', '/app.js', '/styles.css', '/wordbank.js','/dictionary.js','/shanthi','/shanthi/','/shanthi.html','/shanthi.css','/shanthi.js','/shanthi-foods.js','/shanthi-portions.js','/assets/shanthi-captain-marvel.png','/assets/shanthi-wonder-woman.png','/assets/shanthi-warrior.png', '/balaji', '/balaji/', '/balaji.html', '/balaji.js','/balaji-vocabulary.js', '/balaji.css', '/assets/black-panther.png', '/assets/batman.png', '/assets/deadpool.png', '/assets/spider-man.png', '/assets/milan-hero.png', '/assets/milan-swing.png', '/assets/milan-leap.png'):
             if self.path == '/': self.path = '/kids-activity.html'
             if self.path in ('/balaji', '/balaji/'):
                 self.path = '/balaji.html'
+            if self.path in ('/shanthi', '/shanthi/'):
+                self.path = '/shanthi.html'
             super().do_GET()
         else:
             self.send_error(404)
     def do_POST(self):
-        if self.path not in ('/api/activities', '/api/balaji'):
+        if self.path not in ('/api/activities', '/api/balaji', '/api/shanthi'):
             self.send_error(404)
             return
         origin = self.headers.get('Origin')
@@ -209,8 +234,8 @@ class Handler(SimpleHTTPRequestHandler):
             size = int(self.headers.get('Content-Length', '0'))
             if not 0 < size <= 5_000_000: raise ValueError('Backup must be 1 byte to 5 MB.')
             is_balaji = self.path == '/api/balaji'
-            validator = validate_balaji if is_balaji else validate
-            store = self.server.balaji_store if is_balaji else self.server.store
+            validator = validate_shanthi if self.path == '/api/shanthi' else validate_balaji if is_balaji else validate
+            store = self.server.shanthi_store if self.path == '/api/shanthi' else self.server.balaji_store if is_balaji else self.server.store
             data = validator(json.loads(self.rfile.read(size)))
             with store.lock: store.save(data)
             self.reply(200, data)
@@ -226,6 +251,7 @@ def main():
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.store = Store(ROOT / 'data' / 'activities.json')
     server.balaji_store = Store(ROOT / 'data' / 'balaji.json', initial_balaji, validate_balaji)
+    server.shanthi_store = Store(ROOT / 'data' / 'shanthi.json', initial_shanthi, validate_shanthi)
     print(f'Activity tracker: http://{args.host}:{server.server_port}', flush=True)
     try: server.serve_forever()
     except KeyboardInterrupt: pass

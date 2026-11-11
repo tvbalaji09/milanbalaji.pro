@@ -1,3 +1,5 @@
+import {searchNutrition} from './nutrition.mjs';
+import {validateShanthi} from './shanthi.mjs';
 const LEGACY_CATEGORIES = ['reading', 'academics', 'exercise'];
 const CATEGORIES = [...LEGACY_CATEGORIES, 'family_fun', 'guitar', 'journal'];
 const JOURNAL_FIELDS = ['mood', 'tomorrow_goal', 'thankful', 'challenge', 'proud'];
@@ -188,18 +190,24 @@ async function handle(request, env) {
   if (!await authorized(request,env)) {
     return json({error:'Sign in to your family activity journal.'},401, {'WWW-Authenticate':'Basic realm="Little steps", charset="UTF-8"'});
   }
+  if(url.pathname==='/api/nutrition'){
+    if(request.method!=='GET')return json({error:'Method not allowed.'},405,{Allow:'GET'});
+    return searchNutrition(url.searchParams.get('query'));
+  }
   if(url.pathname==='/api/dictionary'){
     if(request.method!=='GET')return json({error:'Method not allowed.'},405,{Allow:'GET'});
     return lookupDictionary(url.searchParams.get('word'));
   }
   const isBalaji=url.pathname==='/api/balaji';
-  const table=isBalaji?'balaji':'activities';
-  const validator=isBalaji?validateBalaji:validate;
-  if (url.pathname !== '/api/activities' && !isBalaji) {
+  const isShanthi=url.pathname==='/api/shanthi';
+  const table=isShanthi?'shanthi':isBalaji?'balaji':'activities';
+  const validator=isShanthi?validateShanthi:isBalaji?validateBalaji:validate;
+  if (url.pathname !== '/api/activities' && !isBalaji && !isShanthi) {
     if (!['GET','HEAD'].includes(request.method)) return json({error:'Method not allowed.'},405,{Allow:'GET, HEAD'});
-    if (!['/','/kids-activity.html','/app.js','/styles.css','/wordbank.js','/balaji','/balaji/','/balaji.html','/balaji.js','/balaji-vocabulary.js','/balaji.css','/assets/black-panther.png','/assets/batman.png','/assets/deadpool.png','/assets/spider-man.png', '/assets/milan-hero.png', '/assets/milan-swing.png', '/assets/milan-leap.png'].includes(url.pathname)) return json({error:'Not found.'},404);
+    if (!['/','/kids-activity.html','/app.js','/styles.css','/wordbank.js','/dictionary.js','/shanthi','/shanthi/','/shanthi.html','/shanthi.css','/shanthi.js','/shanthi-foods.js','/shanthi-portions.js','/assets/shanthi-captain-marvel.png','/assets/shanthi-wonder-woman.png','/assets/shanthi-warrior.png','/balaji','/balaji/','/balaji.html','/balaji.js','/balaji-vocabulary.js','/balaji.css','/assets/black-panther.png','/assets/batman.png','/assets/deadpool.png','/assets/spider-man.png', '/assets/milan-hero.png', '/assets/milan-swing.png', '/assets/milan-leap.png'].includes(url.pathname)) return json({error:'Not found.'},404);
     if (url.pathname === '/') url.pathname = '/kids-activity.html';
     if (url.pathname === '/balaji' || url.pathname === '/balaji/') url.pathname = '/balaji.html';
+    if (url.pathname === '/shanthi' || url.pathname === '/shanthi/') url.pathname = '/shanthi.html';
     return env.ASSETS.fetch(new Request(url, request));
   }
   if (request.method === 'GET') {
@@ -241,7 +249,7 @@ export default {
     result.headers.set('X-Frame-Options','DENY');
     result.headers.set('Referrer-Policy','no-referrer');
     result.headers.set('X-Robots-Tag','noindex, nofollow');
-    result.headers.set('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'");
+    result.headers.set('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://api.dictionaryapi.dev; frame-ancestors 'none'; form-action 'self'; base-uri 'none'");
     if (new URL(request.url).protocol === 'https:') result.headers.set('Strict-Transport-Security','max-age=31536000');
     return result;
   }

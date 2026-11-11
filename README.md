@@ -270,3 +270,72 @@ The vocabulary test checks the count, uniqueness, meanings and example sentences
 The same journal vocabulary section now contains both the child-friendly daily word and a **One word wiser** card using the 500-word offline collection. Browse another word or add the displayed word, meaning, and usage example to the selected day. These saved words are included in journal text exports and JSON backups.
 
 Typed-word lookup checks both offline collections first, so words in the collection do not require the online dictionary. Other words still depend on the external provider and can require a retry or manual definition if it is unavailable. The hosted dictionary request now sends explicit identification and JSON headers and provides a specific busy message for rate limiting. Browser checks confirmed offline lookup while the provider was deliberately blocked, all 500 card entries, saving/reload, and desktop/mobile layouts.
+
+Online lookup retries directly from the browser if the application server cannot reach Free Dictionary API. Only the entered word is sent; app login credentials, names and journal entries are excluded. Offline word lists are checked first.
+
+## Shanthi’s food diary (local preview)
+
+Start the existing Python app from the repository root:
+
+```sh
+python3 server.py --host 127.0.0.1 --port 8000
+```
+
+Open **http://127.0.0.1:8000/shanthi**. Shanthi has separate records in ignored `data/shanthi.json`, written using the existing atomic JSON store outside `public/`. Milan’s and Balaji’s records are untouched. Select any past/current date, search a food, select the stated cooked portion and enter the number of portions. Calories calculate automatically (`Math.round(kcal per portion × portions)`, summed per entry). Each day starts with a fresh 1,550 kcal target while past records remain available. Entries can be edited or removed. JSON export/restore includes the entire diary; restore replaces only Shanthi’s records after confirmation and server validation.
+
+The bundled `public/shanthi-foods.js` catalogue contains Indian dishes and everyday foods. Values are **rounded illustrative estimates**, not exact recipe analysis. Serving sizes are explicit; rice weights are cooked, oats are dry. For unknown foods, choose Custom food and supply kcal from the label or recipe. You can also override any catalogue value for your preparation. The app does not guess calories from unrestricted food names. The built-in estimates need no API key. UK CoFID search uses the bundled official dataset described below; images and other assets are still bundled locally.
+
+Seven date-rotated vegetarian menu hints total 1,500–1,550 estimated kcal each. “Another idea” browses alternatives. Hints do not count as consumption until you explicitly add a meal. Recipe oil is assumed in prepared-dish estimates; add extra oil only when it is additional to that estimate. No nutritional completeness or personal suitability is implied by the menu totals. The target is user-selected.
+
+Reference context: [NHS calorie counting](https://www.nhs.uk/better-health/lose-weight/calorie-counting/) explains portion sizes, packet labels and added oil; [ICMR–NIN Dietary Guidelines 2024](https://www.nin.res.in/dietaryguidelines/pdfjs/locale/DGI24thJune2024fin.pdf) provides Indian dietary guidance. These are background references; this small hand-curated catalogue is not an official nutrient database.
+
+Shanthi was published on 11 November 2026 at **https://milanbalaji.pro/shanthi**, behind the existing Cloudflare application login. Its separate `shanthi` D1 document uses revision-controlled saves. Migration `0003_shanthi.sql` has been applied remotely. For a fresh deployment, apply migrations before deploying:
+
+```sh
+npx wrangler d1 migrations apply milanbalaji-activities --remote
+npm run deploy
+```
+
+Migration `0003_shanthi.sql` creates only Shanthi’s table and does not replace existing records. Local rendering/tests use isolated temporary data. Tests cover portion calculations, menu totals, save/restart/restore, profile isolation, invalid and stale saves, and mobile layouts.
+
+
+### UK food search (CoFID)
+
+Shanthi defaults to **Indian & everyday estimates**; **UK CoFID food database** remains available in the search selector, with 2,849 searchable records imported from the official McCance & Widdowson CoFID 2021 workbook. It is served by the app’s `/api/nutrition` endpoint on both Python and Cloudflare. Search terms and diary records stay in the application; no external nutrition API, account or API key is required. Any previously configured USDA key is unused. Older saved food records retain their original values and source labels.
+
+Search by food name (for example, chapati, chicken curry or rice boiled), choose the correct preparation and size of one portion, then enter the number of portions. Alcoholic beverages use **ml**, as specified by the CoFID workbook. The page switches the labels and calculation basis automatically. Each diary entry stores the food name, reference amount, CoFID identifier and kcal value in the existing schema. Calories remain estimates and can be overridden for your recipe or packet label. The 1,550 kcal daily target, menu hints, custom foods, Indian estimates, date history and export/restore remain available.
+
+CoFID’s coverage is finite: it has chapatis and curries, but no numeric-kcal idli record. The dosa result describes **vegetable filling**, not a complete dosa. The app never silently substitutes a different food or treats missing nutrition as zero. Use the clearly labelled Indian estimates or Custom food for missing dishes. Search supports UK spelling and aliases such as roti/chapati and yogurt/yoghurt.
+
+The bundled data live in `nutrition/cofid.json`, outside `public/`; Python reads the file and the Worker bundles the same records. The app has no runtime spreadsheet dependency. The importer uses only Python’s standard library. To reproduce the dataset:
+
+```sh
+curl -fL -o /tmp/cofid-2021.xlsx 'https://assets.publishing.service.gov.uk/media/60538b91e90e07527df82ae4/McCance_Widdowsons_Composition_of_Foods_Integrated_Dataset_2021..xlsx'
+python3 scripts/import_cofid.py /tmp/cofid-2021.xlsx
+```
+
+The importer selects the `1.3 Proximates` table’s **KCALS** column (not kJ), retains actual zero values, excludes 38 records without numeric energy, and records the original workbook SHA-256. The official file reuses food code `13-669` for two different foods; both rows are preserved with distinct internal IDs. Calories are per 100 g except the alcoholic beverage group Q, which is per 100 ml. See `nutrition/README.md` for provenance and licensing.
+
+Run and preview with:
+
+```sh
+python3 server.py --host 127.0.0.1 --port 8000
+```
+
+Open **http://127.0.0.1:8000/shanthi**. For another deployment, apply pending migrations and deploy as described above. There is no nutrition secret to configure.
+
+Shanthi now logs **number of portions** for CoFID foods. Choose the size of one portion (25–300 g, or ml for alcoholic drinks), then enter a count such as 2 or 0.5. These sizes are explicit user choices, not official serving recommendations. Calories per portion are calculated from CoFID’s per-100 reference and rounded; diary totals multiply that value by the portion count. The selected size is stored with the entry. Existing records keep their previous quantities and calorie values.
+
+
+Fried-egg portions: CoFID `12-944` is 200 kcal per **100 g** (sunflower oil), and `12-962` is 167 kcal per 100 g (without fat). They are not per-egg values. These two foods now default to **1 fried egg (estimated 60 g)**, with an editable size. At the sunflower-oil value, three such eggs total 360 kcal. The 60 g serving estimate is supported by the British Nutrition Foundation Food – a fact of life [food cards](https://www.foodafactoflife.org.uk/media/5733/food-cards-with-energy-c-3-16.pdf), which show a fried egg at 60 g and 120 kcal. Actual egg sizes and oil vary. The underlying official dataset remains unchanged. An explicit “Count as eggs (60 g each)” action is offered on saved entries using the original 100 g egg basis; other historical entries are not recalculated automatically.
+
+
+Named portions now cover common CoFID foods, including eggs, bread slices, chapatis, naan/pitta, rice and pasta bowls, curry/soup bowls, yogurt pots, milk glasses and individual fruit. `public/shanthi-portions.js` keeps these hand-curated, editable estimates separate from CoFID’s official energy data. Household sizes vary; estimates are not official CoFID serving recommendations. Ingredients and prepared dishes are matched separately (for example, chapati flour is not assigned a chapati serving, and egg-fried rice is a rice bowl, not an egg).
+
+For every other CoFID food, choosing a portion is required: define a named piece/bowl/handful and its weight or volume, or select an explicit weighed portion. There is no automatic 100 g default for unsupported foods. Custom serving labels and sizes are saved with the count and calorie value. Older 100 g entries for recognised foods have an explicit serving-correction action; existing history is not silently recalculated.
+
+The Indian & everyday estimates list also includes paneer butter masala, fried/scrambled eggs, omelette and egg curry, pizza varieties, plain/tomato/creamy pasta, roasted/fried papad, Chicken 65, fried chicken, pepper fry, and chicken/egg fried rice. Each is a rounded illustrative estimate with an explicit slice, piece, egg or bowl size. Pizza sizes, coatings, oil and sauces vary; edit kcal per portion using the recipe or packet label. These extra estimates are separate from the official CoFID data.
+
+Little Inspiration now has 14 date-rotated day menus, including seven salad-led menus with chicken, tuna/beans, chickpea/feta, tofu/edamame, lentils, eggs or salmon/quinoa. Filter by All menu ideas, Salads & protein or Indian favourites. New salad recipes include ingredient amounts, their protein sources, estimated bowl calories and dressing; they are also available in the everyday food picker. Full-day menu estimates remain 1,500–1,550 kcal. No numerical protein targets or personalised nutrition claims are made. Protein-source variety follows the [NHS balanced-diet guidance](https://www.nhs.uk/Live-well/eat-well/how-to-eat-a-balanced-diet/eating-a-balanced-diet/); recipe values remain hand-curated estimates.
+
+Published Worker version: `8cbd2d81-382a-4643-8d93-23c01d3deeaf`. Live authentication checks passed for Shanthi, its portion asset/API, CoFID search, Milan and Balaji. The remote Shanthi document was verified as valid JSON with the 1,550 kcal target. Local preview records are not copied into deployment assets: use JSON export locally and restore on the live page to transfer them.
