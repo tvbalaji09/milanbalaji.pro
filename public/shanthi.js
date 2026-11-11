@@ -85,7 +85,7 @@ function render(){
  const entries=items(),total=entries.reduce((sum,e)=>sum+calories(e),0);
  $('day-title').textContent=new Date(selected()+'T12:00:00Z').toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long'});
  $('consumed').textContent=number(total);$('remaining').textContent=number(Math.abs(1550-total));$('remaining-label').textContent=total>1550?'above target':'remaining';
- $('ring').style.setProperty('--progress',Math.min(total/1550*100,100)+'%');$('ring').setAttribute('aria-label',`${total} of 1550 calories logged`);
+ $('ring').style.setProperty('--progress',Math.min(total/1550*100,100)+'%');$('ring').classList.toggle('over-target',total>1550);$('ring').setAttribute('aria-label',`${total} of 1550 calories logged`);
  $('entry-count').textContent=`${entries.length} food${entries.length===1?'':'s'}`;
  const log=$('food-log');log.replaceChildren();
  if(!entries.length)log.append(node('p','A fresh page for your day. Add your first food above.','empty'));
